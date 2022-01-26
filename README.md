@@ -8,7 +8,6 @@ The script scrapes [FishBase](https://fishbase.se/search.php) pages and extracts
 2. Environment
 3. IUCN Red List Status
 
-​		
 
 ## Requirement
 
@@ -23,13 +22,11 @@ $ conda activate fishbase
 
 
 
-
-
 ## Using the scripts
 
 ### 0. Prepare a list of species
 
-The list must be a text file containing valid genus-species names like following. 
+The list must be a text file containing valid genus-species names like following.
 
 ```
 Abalistes stellatus
@@ -56,11 +53,10 @@ $ echo "Abalistes stellatus" | python scraper.py
 ```
 
 
-Practically, we would want to run this script against multiple species **in parallel**. We recommend using GNU parallel for the job. (And activate conda environment in each of parallel processes.)
+Practically, we would want to run this script against multiple species **in parallel**. We recommend using [GNU parallel](https://www.gnu.org/software/parallel/) for the job. (And activate conda environment in each of parallel processes.)
 
 ```shell
-$ cat list.txt | parallel "conda activate fishbase && echo {} | python scraper.py"
-| sort > list.log
+$ cat list.txt | parallel "conda activate fishbase && echo {} | python scraper.py" | sort > list.log
 ```
 
 
@@ -73,4 +69,4 @@ Create a CSV file from a bunch of pickles by following. This will create `fishba
 $ python to_csv.py
 ```
 
-Note that part #1 and #2 were separated because #1 is parallelizable while #2 is not.
+Note that the step #1 and #2 were separated because #1 is parallelizable while #2 is not.
