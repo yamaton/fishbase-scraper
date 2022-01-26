@@ -1,0 +1,76 @@
+# Scraping from FishBase
+
+## About
+
+The script scrapes [FishBase](https://fishbase.se/search.php) pages and extracts following items.
+
+1. Common Name
+2. Environment
+3. IUCN Red List Status
+
+​		
+
+## Requirement
+
+* beautifulsoup4
+
+If you are `conda` user, it's recommended to create a virtual environment with
+
+```shell
+$ conda create -n fishbase beautifulsoup4
+$ conda activate fishbase
+```
+
+
+
+
+
+## Using the scripts
+
+### 0. Prepare a list of species
+
+The list must be a text file containing valid genus-species names like following. 
+
+```
+Abalistes stellatus
+Ablennes hians
+Abudefduf sexfasciatus
+Abudefduf sordidus
+Abudefduf sparoides
+```
+
+When dealing with multiple files, `utils/merge_and_keep_unique_names.py` might be helpful. This utility script merges files and removes duplicates.
+
+```shell
+$ python utils/merge_and_keep_unique_names.py file1 file2 > list.txt
+```
+
+
+
+### 1. Scrape from FishBase
+
+Load a Fishbase page and extract information. For example, following command fetches a page and saves a Python dictionary as a pickle at  `data/Abalistes stellatus.pkl`.
+
+```shell
+$ echo "Abalistes stellatus" | python scraper.py
+```
+
+
+Practically, we would want to run this script against multiple species **in parallel**. We recommend using GNU parallel for the job. (And activate conda environment in each of parallel processes.)
+
+```shell
+$ cat list.txt | parallel "conda activate fishbase && echo {} | python scraper.py"
+| sort > list.log
+```
+
+
+
+### 2. Put together as CSV
+
+Create a CSV file from a bunch of pickles by following. This will create `fishbase.csv` .
+
+```shell
+$ python to_csv.py
+```
+
+Note that part #1 and #2 were separated because #1 is parallelizable while #2 is not.
