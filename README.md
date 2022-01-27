@@ -1,4 +1,4 @@
-# Scraping from FishBase
+# Scraping FishBase
 
 ## About
 
@@ -44,7 +44,7 @@ $ python utils/merge_and_keep_unique_names.py file1 file2 > list.txt
 
 
 
-### 1. Scrape from FishBase
+### 1. Scrape FishBase pages
 
 Load a Fishbase page and extract information. For example, following command fetches a page and saves a Python dictionary as a pickle at  `data/Abalistes stellatus.pkl`.
 
@@ -59,8 +59,16 @@ Practically, we would want to run this script against multiple species **in para
 $ cat list.txt | parallel "echo {} | python scraper.py" | sort > list.log
 ```
 
+Scraping can fail for various reasons (page not found, irregular page format, server too busy, network problems, etc.) so it's good practice to check the log after running the script. The log file `list.log`  contains tab-separated two columns. The first is the same as in `list.txt`. The second column contains either `OK` or `FAIL` as the scraping status. One can view just errors by filtering with `grep`.
 
-### 2. Put together as CSV
+```shell
+$ cat list.log | grep FAIL
+Gerres poeti    FAIL (Parse Error)
+```
+
+
+
+### 2. Put together data as CSV
 
 Create a CSV file (`fishbase.csv`) from a bunch of pickle files under `data` directory.
 
