@@ -56,14 +56,13 @@ $ echo "Abalistes stellatus" | python scraper.py
 Practically, we would want to run this script against multiple species **in parallel**. We recommend using [GNU parallel](https://www.gnu.org/software/parallel/) for the job. (And activate conda environment in each of parallel processes.)
 
 ```shell
-$ cat list.txt | parallel "conda activate fishbase && echo {} | python scraper.py" | sort > list.log
+$ cat list.txt | parallel "echo {} | python scraper.py" | sort > list.log
 ```
-
 
 
 ### 2. Put together as CSV
 
-Create a CSV file from a bunch of pickles by following. This will create `fishbase.csv` .
+Create a CSV file (`fishbase.csv`) from a bunch of pickle files under `data` directory.
 
 ```shell
 $ python to_csv.py
