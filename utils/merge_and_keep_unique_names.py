@@ -16,7 +16,7 @@ def get_genus_species(filename: str) -> set[str]:
     """Extract space-separated word pairs that are meant by (Genus, Species) names"""
     with open(filename) as f:
         lines = f.readlines()
-        lines = [line.strip() for line in lines]
+        lines = [line.strip() for line in lines if line.strip()]
 
     result = set()
     for linenum, line in enumerate(lines):
