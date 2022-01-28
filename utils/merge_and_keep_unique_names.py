@@ -24,12 +24,12 @@ def get_genus_species(filename: str) -> set[str]:
         assert len(words) == 2
         genus, species = words
         if not genus.istitle():
-            logging.error(
+            logging.warn(
                 f"[{filename}: line {linenum + 1}] Correct genus name: {genus} --> {genus.title()}."
             )
             genus = genus.title()
         if not species.islower():
-            logging.error(
+            logging.warn(
                 f"[{filename}: line {linenum + 1}] Correct species name {species} --> {species.lower()}."
             )
             species = species.lower()
