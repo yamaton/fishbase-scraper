@@ -72,8 +72,9 @@ if __name__ == "__main__":
     num_entries = len(names)
     matched = len(names & allnames)
     unmatched = num_entries - matched
-    print(f"Matched:  {matched}/{num_entries}")
+    print(f"Found exact matching in FishBase:  {matched} out of {num_entries}")
     print()
+    print(f"Suggested names for the rest of {len(not_found)} entries:")
 
     allgenus, allspecies = zip(*[x.split() for x in allnames])
     allgenus = set(allgenus)
