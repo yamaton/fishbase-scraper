@@ -86,6 +86,6 @@ if __name__ == "__main__":
             suggestion = "?????"
             genus, species = name.split()
             if genus in allgenus and species in allspecies:
-                suggestion = "[good by words; not found in FishBase]"
+                suggestion = "[OK by words; not found in FishBase]"
         print(f"{name}\t-->\t{suggestion}")
 

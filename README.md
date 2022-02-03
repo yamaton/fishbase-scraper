@@ -45,7 +45,7 @@ Abudefduf sordidus
 Abudefduf sparoides
 ```
 
-When dealing with multiple files, `utils/merge_and_keep_unique_names.py` might be helpful. This utility script merges files and removes duplicates.
+[Optional] When dealing with multiple files, `utils/merge_and_keep_unique_names.py` might be helpful. This utility script merges files and removes duplicates.
 
 ```shell
 $ python utils/merge_and_keep_unique_names.py file1 file2 > list.txt
@@ -61,6 +61,12 @@ It's good to check if entires in your list exist as a FishBase page beforehand. 
 
 ```shell
 $ python check_names.py list.txt
+```
+
+[Optional] This name checker automatically scrapes and downloads all scientific names in FishBase for reference. If you want to create the list alone, run
+
+```shell
+$ bash utils/collect_all_names.sh > ScientificNamesAll.txt
 ```
 
 
