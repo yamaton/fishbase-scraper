@@ -24,9 +24,18 @@ $ conda activate fishbase
 
 ## Using the scripts
 
-### 0. Prepare a list of species
+### 0. Clone this repository
 
-The list must be a text file containing valid genus-species names like following.
+Clone this repository and enter the directory.
+
+```shell
+$ git clone https://github.com/yamaton/fishbase-scraper.git
+$ cd fishbase-scraper
+```
+
+### 0-a. Prepare a list of species
+
+Assume you have a text file containing genus-species names like following.
 
 ```
 Abalistes stellatus
@@ -42,6 +51,17 @@ When dealing with multiple files, `utils/merge_and_keep_unique_names.py` might b
 $ python utils/merge_and_keep_unique_names.py file1 file2 > list.txt
 ```
 
+
+### 0-b. Check names in the list
+
+It's good to check if entires in your list exist as a FishBase page beforehand. Run following then it will show
+
+* Number of matches (out of all entries)
+* Suggestion of corrected names
+
+```shell
+$ python check_names.py list.txt
+```
 
 
 ### 1. Scrape FishBase pages
