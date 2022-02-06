@@ -9,17 +9,17 @@ The script scrapes [FishBase](https://fishbase.se/search.php) pages and extracts
 3. IUCN Red List Status
 
 
-## Requirement
+## Requirements
 
 * beautifulsoup4
+* pathos [optional]
 
 If you are `conda` user, it's recommended to create a virtual environment with
 
 ```shell
-$ conda create -n fishbase beautifulsoup4
+$ conda create -n fishbase -c conda-forge pathos beautifulsoup4
 $ conda activate fishbase
 ```
-
 
 
 ## Using the scripts
@@ -54,16 +54,21 @@ $ python utils/merge_and_keep_unique_names.py file1 file2 > list.txt
 
 ### 0-b. Check names in the list
 
-It's good to check if entires in your list exist as a FishBase page beforehand. Run following then it will show
-
-* Number of matches (out of all entries)
-* Suggestion of corrected names
+It might be good to check if names in your list exist in FishBase beforehand. Following command will show (a) number of matches and (b) suggested corrections.
 
 ```shell
 $ python check_names.py list.txt
 ```
 
-[Optional] This name checker automatically scrapes and downloads all scientific names in FishBase for reference. If you want to create the list alone, run
+[Optional] If you want to save the corrections as CSV, a pipe like this might be useful; the first column has the original names, and the second column has suggested names. Failed suggestions are either `[OK by words; not found in FishBase]` or `?????`.
+
+```shell
+$ python check_names.py list.txt > suggestions.txt
+$ cat suggestions.txt | tail --lines +4 | sed -r 's/\t-->\t/,/g' > suggestions.csv
+```
+
+
+[Optional] This name checker automatically scrapes and downloads all scientific names in FishBase for reference. If you want to create the list of all fish names in FishBase, run
 
 ```shell
 $ bash utils/collect_all_names.sh > ScientificNamesAll.txt
