@@ -121,10 +121,11 @@ if __name__ == "__main__":
     num_mutations = args.distance
 
     with REFERENCE.open() as f:
-        allnames = {line.strip().lower() for line in f.readlines() if line.strip()}
+        allnames = {' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()}
+
 
     with open(args.file) as f:
-        names = {line.strip().lower() for line in f.readlines() if line.strip()}
+        names = {' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()}
 
     not_found = sorted(names - allnames)
     ## Report summary
