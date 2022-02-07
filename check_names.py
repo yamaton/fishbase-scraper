@@ -22,12 +22,15 @@ Replace Levenshtein with Damerau–Levenshtein to fix this inconsistencies in di
 """
 
 import argparse
+import gzip
 import pathlib
 import subprocess
 import itertools as it
+from typing import Union
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
+REFERENCE_NCBI =  BASEDIR / "ncbi_taxdump" / "ncbi_names.txt.gz"
 
 # unknown output
 UNKNOWN = "?????"
@@ -101,6 +104,14 @@ def normalize(s: str) -> str:
     return f"{genus} {species}"
 
 
+def load_names(p: Union[str, pathlib.Path]) -> set[str]:
+    p = pathlib.Path(p)
+    f = gzip.open(p, "rt") if p.suffix == ".gz" else p.open()
+    names = {' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()}
+    f.close()
+    return names
+
+
 if __name__ == "__main__":
     if not REFERENCE.exists():
         print(f"File not found: {REFERENCE}")
@@ -120,12 +131,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     num_mutations = args.distance
 
-    with REFERENCE.open() as f:
-        allnames = {' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()}
-
-
-    with open(args.file) as f:
-        names = {' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()}
+    allnames = load_names(REFERENCE)
+    names = load_names(args.file)
+    ncbi_names = load_names(REFERENCE_NCBI)
 
     not_found = sorted(names - allnames)
     ## Report summary
@@ -149,7 +157,10 @@ if __name__ == "__main__":
         suggestions = (get_suggestion(name, allnames, num_mutations) for name in not_found)
     for name, suggestion in zip(not_found, suggestions):
         if suggestion == UNKNOWN:
-            genus, species = name.split()
-            if genus in allgenus and species in allspecies:
-                suggestion = "[OK by words; not found in FishBase]"
+            if name in ncbi_names:
+                suggestion = "[FOUND in NCBI; unavailable in FishBase]"
+            else:
+                genus, species = name.split()
+                if genus in allgenus and species in allspecies:
+                    suggestion = "[OK by words; not found in FishBase]"
         print(f"{normalize(name)}\t-->\t{normalize(suggestion)}")
