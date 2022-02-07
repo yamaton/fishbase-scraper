@@ -1,0 +1,1 @@
+ncbi_taxdump/ncbi_names.txt.gz filter=lfs diff=lfs merge=lfs -text
