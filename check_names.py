@@ -26,7 +26,7 @@ import gzip
 import pathlib
 import subprocess
 import itertools as it
-from typing import Union
+from typing import Union, Set
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
@@ -56,7 +56,7 @@ def levenshtein(s1: str, s2: str) -> int:
     return distances[-1]
 
 
-def mutate(word: str) -> set[str]:
+def mutate(word: str) -> Set[str]:
     """Mutate string"""
     letters = "abcdefghijklmnopqrstuvwxyz"
     splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
@@ -69,7 +69,7 @@ def mutate(word: str) -> set[str]:
     return res
 
 
-def update(bag: set[str]) -> set[str]:
+def update(bag: Set[str]) -> Set[str]:
     return {w_new for w in bag for w_new in mutate(w)}
 
 
@@ -78,7 +78,7 @@ def download():
     subprocess.run(f"bash {p.as_posix()} > {REFERENCE.as_posix()}", shell=True)
 
 
-def get_suggestion(sample: str, allnames: set[str], num_attempts: int) -> str:
+def get_suggestion(sample: str, allnames: Set[str], num_attempts: int) -> str:
     if num_attempts < 3:
         if sample in allnames:
             return sample
@@ -104,7 +104,7 @@ def normalize(s: str) -> str:
     return f"{genus} {species}"
 
 
-def load_names(p: Union[str, pathlib.Path]) -> set[str]:
+def load_names(p: Union[str, pathlib.Path]) -> Set[str]:
     p = pathlib.Path(p)
     f = gzip.open(p, "rt") if p.suffix == ".gz" else p.open()
     names = {' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()}
