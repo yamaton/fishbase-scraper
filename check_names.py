@@ -23,6 +23,7 @@ Replace Levenshtein with Damerau–Levenshtein to fix this inconsistencies in di
 
 import argparse
 import gzip
+import logging
 import pathlib
 import subprocess
 import itertools as it
@@ -34,6 +35,12 @@ REFERENCE_NCBI =  BASEDIR / "ncbi_taxdump" / "ncbi_names.txt.gz"
 
 # unknown output
 UNKNOWN = "?????"
+
+# set logging level
+logging.basicConfig(
+    format="[%(levelname)s] %(message)s",
+    level=logging.INFO
+)
 
 
 def levenshtein(s1: str, s2: str) -> int:
@@ -128,21 +135,32 @@ if __name__ == "__main__":
         default=2,
         help=f"""Say '{UNKNOWN}' if a match is not found within this distance.""",
     )
+    parser.add_argument(
+        "--ncbi",
+        help="Check against NCBI taxonomy dump if failed to match Fishbase.",
+        action='store_true',
+    )
     args = parser.parse_args()
     num_mutations = args.distance
+    use_ncbi_taxdump = args.ncbi
 
     allnames = load_names(REFERENCE)
     names = load_names(args.file)
-    ncbi_names = load_names(REFERENCE_NCBI)
+    ncbi_names = set()
+    if use_ncbi_taxdump:
+        if REFERENCE_NCBI.exists():
+            ncbi_names = load_names(REFERENCE_NCBI)
+        else:
+           logging.warning(f"NCBI taxdump is missing at {REFERENCE_NCBI}")
+           logging.warning("Consider getting from https://github.com/yamaton/fishbase-scraper/raw/main/ncbi_taxdump/ncbi_names.txt.gz")
 
     not_found = sorted(names - allnames)
     ## Report summary
     num_entries = len(names)
     matched = len(names & allnames)
     unmatched = num_entries - matched
-    print(f"Found exact matching in FishBase:  {matched} out of {num_entries}")
-    print()
-    print(f"Suggested names for the rest of {len(not_found)} entries:")
+    logging.info(f"Found exact matching in FishBase:  {matched} out of {num_entries}")
+    logging.info(f"Suggested names for the rest of {len(not_found)} entries:")
 
     allgenus, allspecies = zip(*[x.split() for x in allnames])
     allgenus = set(allgenus)
@@ -154,6 +172,7 @@ if __name__ == "__main__":
         pool = Pool()
         suggestions = pool.map(lambda name: get_suggestion(name, allnames, num_mutations), not_found)
     except ImportError:
+        logging.warning("Package pathos is not found. Running without parallelization...")
         suggestions = (get_suggestion(name, allnames, num_mutations) for name in not_found)
     for name, suggestion in zip(not_found, suggestions):
         if suggestion == UNKNOWN:
