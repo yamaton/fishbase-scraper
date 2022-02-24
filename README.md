@@ -70,6 +70,16 @@ It might be good to check if names in your list exist in FishBase beforehand. Fo
 $ python check_names.py list.txt
 ```
 
+
+
+**[Optional]** This name checker can search a name from NCBI taxdump when the name is not found in FishBase. To enable the feature, run with `--ncbi` option: 
+
+```shell
+$ python check_names.py list.txt --ncbi
+```
+
+
+
 **[Optional]** If you want to save the corrections as CSV, a pipe like this might be useful; the first column has the original names, and the second column has suggested names. Failed suggestions are either `[OK by words; not found in FishBase]` or `?????`.
 
 ```shell
@@ -78,11 +88,13 @@ $ cat suggestions.txt | sed -r 's/\t-->\t/,/g' > suggestions.csv
 ```
 
 
+
 **[Optional]** This name checker automatically scrapes and downloads all scientific names in FishBase for reference. If you want to create the list of all fish names in FishBase, run
 
 ```shell
 $ bash utils/collect_all_names.sh > ScientificNamesAll.txt
 ```
+
 
 
 ### 1. Scrape FishBase pages
