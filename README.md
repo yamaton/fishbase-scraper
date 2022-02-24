@@ -26,6 +26,16 @@ $ conda activate fishbase
 
 ### 0. Clone this repository
 
+⚠️ Please install `git-lfs`⚠️  before cloning the repository as this it contains a binary file (gzip) managed by Git LFS. 
+
+```shell
+# Ubuntu
+$ sudo apt install git-lfs
+
+# MacOS
+$ brew install git-lfs
+```
+
 Clone this repository and enter the directory.
 
 ```shell
@@ -45,7 +55,7 @@ Abudefduf sordidus
 Abudefduf sparoides
 ```
 
-[Optional] When dealing with multiple files, `utils/merge_and_keep_unique_names.py` might be helpful. This utility script merges files and removes duplicates.
+**[Optional]** When dealing with multiple files, `utils/merge_and_keep_unique_names.py` might be helpful. This utility script merges files and removes duplicates.
 
 ```shell
 $ python utils/merge_and_keep_unique_names.py file1 file2 > list.txt
@@ -60,15 +70,15 @@ It might be good to check if names in your list exist in FishBase beforehand. Fo
 $ python check_names.py list.txt
 ```
 
-[Optional] If you want to save the corrections as CSV, a pipe like this might be useful; the first column has the original names, and the second column has suggested names. Failed suggestions are either `[OK by words; not found in FishBase]` or `?????`.
+**[Optional]** If you want to save the corrections as CSV, a pipe like this might be useful; the first column has the original names, and the second column has suggested names. Failed suggestions are either `[OK by words; not found in FishBase]` or `?????`.
 
 ```shell
 $ python check_names.py list.txt > suggestions.txt
-$ cat suggestions.txt | tail --lines +4 | sed -r 's/\t-->\t/,/g' > suggestions.csv
+$ cat suggestions.txt | sed -r 's/\t-->\t/,/g' > suggestions.csv
 ```
 
 
-[Optional] This name checker automatically scrapes and downloads all scientific names in FishBase for reference. If you want to create the list of all fish names in FishBase, run
+**[Optional]** This name checker automatically scrapes and downloads all scientific names in FishBase for reference. If you want to create the list of all fish names in FishBase, run
 
 ```shell
 $ bash utils/collect_all_names.sh > ScientificNamesAll.txt

@@ -177,7 +177,7 @@ if __name__ == "__main__":
     for name, suggestion in zip(not_found, suggestions):
         if suggestion == UNKNOWN:
             if name in ncbi_names:
-                suggestion = "[FOUND in NCBI; unavailable in FishBase]"
+                suggestion = "[FOUND in NCBI taxdump; unavailable in FishBase]"
             else:
                 genus, species = name.split()
                 if genus in allgenus and species in allspecies:
