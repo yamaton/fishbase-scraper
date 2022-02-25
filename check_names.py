@@ -314,8 +314,9 @@ if __name__ == "__main__":
         from pathos.multiprocessing import ProcessingPool as Pool
         from pathos.multiprocessing import cpu_count
         nodes = args.cpus if args.cpus > 0 else cpu_count()
-        pool = Pool(nodes=nodes)
-        results = pool.map(machine.run, names)
+        with Pool(nodes=nodes) as pool:
+            results = pool.map(machine.run, names)
+
     except ImportError:
         logging.warning("Package pathos is not found. Running without parallelization...")
         total = len(names)
