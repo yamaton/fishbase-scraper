@@ -29,6 +29,7 @@ import json
 import logging
 import pathlib
 import subprocess
+import sys
 import urllib.parse
 import urllib.request
 import itertools as it
@@ -320,7 +321,7 @@ if __name__ == "__main__":
         total = len(names)
         results = []
         for i, name in enumerate(names, 1):
-            logging.info(f"Processing {i:>4}/{total}: {name}")
+            sys.stderr.write(f"Progress: {i:>4}/{total}: {name}                                    \r")
             res = machine.run(name)
             results.append(res)
 
