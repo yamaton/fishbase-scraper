@@ -275,11 +275,6 @@ if __name__ == "__main__":
         action='store_true',
     )
     parser.add_argument(
-        "--worms",
-        help="Search with WoRMS if failed to find in Fishbase.",
-        action='store_true',
-    )
-    parser.add_argument(
         "--cpus",
         help="Number of CPU cores to use; set -1 to use all. (default: %(default)s)",
         type=int,
@@ -290,7 +285,6 @@ if __name__ == "__main__":
 
     num_mutations = args.distance
     use_ncbi_taxdump = args.ncbi
-    use_worms = args.worms
     output_filename = args.output
 
     logging.debug("Loading all scientific names in FishBase")
