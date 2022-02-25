@@ -275,17 +275,17 @@ if __name__ == "__main__":
         action='store_true',
     )
     parser.add_argument(
-        "--cpus",
+        "--num_cpus",
         help="Number of CPU cores to use; set -1 to use all. (default: %(default)s)",
         type=int,
         metavar="<int>",
         default=-1
     )
     args = parser.parse_args()
-
+    output_filename = args.output
+    num_cpus = args.num_cpus
     num_mutations = args.distance
     use_ncbi_taxdump = args.ncbi
-    output_filename = args.output
 
     logging.debug("Loading all scientific names in FishBase")
     corpus = set(load_names(REFERENCE))
@@ -305,10 +305,10 @@ if __name__ == "__main__":
     machine = Corrector(corpus, ncbi_corpus, num_mutations)
     ## Suggest based on genus-species pair similarity
     try:
-        from pathos.multiprocessing import ProcessingPool as Pool
+        from pathos.multiprocessing import ProcessPool
         from pathos.multiprocessing import cpu_count
-        nodes = args.cpus if args.cpus > 0 else cpu_count()
-        with Pool(nodes=nodes) as pool:
+        nodes = num_cpus if num_cpus > 0 else cpu_count()
+        with ProcessPool(nodes=nodes) as pool:
             results = pool.map(machine.run, names)
 
     except ImportError:
