@@ -72,6 +72,14 @@ $ python check_names.py list.txt
 
 
 
+To save the corrections in CSV,  you may add `--output <file.csv>`
+
+```shell
+$ python check_names.py list.txt --output check_names_result.csv
+```
+
+
+
 **[Optional]** This name checker can search a name from NCBI taxdump when the name is not found in FishBase. To enable the feature, run with `--ncbi` option: 
 
 ```shell
