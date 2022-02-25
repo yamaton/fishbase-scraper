@@ -23,12 +23,11 @@ Replace Levenshtein with Damerau–Levenshtein to fix this inconsistencies in di
 
 import argparse
 import collections
+import csv
 import gzip
 import json
 import logging
-from mimetypes import init
 import pathlib
-import re
 import subprocess
 import urllib.parse
 import urllib.request
@@ -51,6 +50,7 @@ NO_PROVIDER = ""
 logging.basicConfig(
     format="[%(levelname)s] %(message)s",
     level=logging.INFO
+    # level=logging.DEBUG
 )
 
 # Data structure for name-correction result
@@ -194,10 +194,10 @@ def normalize(s: str) -> str:
     return f"{genus} {species}"
 
 
-def load_names(p: Union[str, pathlib.Path]) -> Set[str]:
+def load_names(p: Union[str, pathlib.Path]) -> List[str]:
     p = pathlib.Path(p)
     f = gzip.open(p, "rt") if p.suffix == ".gz" else p.open()
-    names = {' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()}
+    names = [' '.join(line.strip().lower().split()) for line in f.readlines() if line.strip()]
     f.close()
     return names
 
@@ -212,13 +212,13 @@ class Corrector(object):
         if s in self.corpus:
             return Result(s, s, PROVIDER_FISHBASE)
 
-        result_worms = get_suggestion_worm(s)
-        if result_worms != UNKNOWN:
-            return Result(s, result_worms, PROVIDER_WORMS)
-
         result_spell = correct_spelling(s, self.corpus, self.num_mutation)
         if result_spell != UNKNOWN:
             return Result(s, result_spell, PROVIDER_SPELL_CORRECTOR)
+
+        result_worms = get_suggestion_worm(s)
+        if result_worms != UNKNOWN:
+            return Result(s, result_worms, PROVIDER_WORMS)
 
         if s in self.ncbi_corpus:
             return Result(s, s, PROVIDER_NCBI_TAXDUMP)
@@ -239,6 +239,13 @@ def report(results: Iterable[Result]):
         print(f"{x.provider:12}: {normalize(x.input):30}\t-->\t{normalize(x.output)}")
 
 
+def to_csv(results: Iterable[Result], filename: Union[str, pathlib.Path]):
+    # fieldnames = ("original", "corrected", "provider")
+    with open(filename, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
+        writer.writerows(results)
+
+
 if __name__ == "__main__":
     if not REFERENCE.exists():
         logging.info(f"File not found: {REFERENCE}")
@@ -249,10 +256,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("file", help="Input file")
     parser.add_argument(
+        "-o", "--output",
+        metavar="<file>",
+        help="Output file",
+        default=None,
+    )
+    parser.add_argument(
         "--distance",
         type=int,
+        metavar="<int>",
         default=2,
-        help=f"""Say '{UNKNOWN}' if a match is not found within this distance.""",
+        help=f"""Say '{UNKNOWN}' if a match is not found within this distance. (default: %(default)s)""",
     )
     parser.add_argument(
         "--ncbi",
@@ -264,30 +278,53 @@ if __name__ == "__main__":
         help="Search with WoRMS if failed to find in Fishbase.",
         action='store_true',
     )
+    parser.add_argument(
+        "--cpus",
+        help="Number of CPU cores to use; set -1 to use all. (default: %(default)s)",
+        type=int,
+        metavar="<int>",
+        default=-1
+    )
     args = parser.parse_args()
 
     num_mutations = args.distance
     use_ncbi_taxdump = args.ncbi
     use_worms = args.worms
+    output_filename = args.output
 
-    corpus = load_names(REFERENCE)
+    logging.debug("Loading all scientific names in FishBase")
+    corpus = set(load_names(REFERENCE))
     names = load_names(args.file)
+
+    logging.debug("Loadiing NCBI taxdump...")
     ncbi_corpus = set()
     if use_ncbi_taxdump:
         if REFERENCE_NCBI.exists():
-            ncbi_corpus = load_names(REFERENCE_NCBI)
+            ncbi_corpus = set(load_names(REFERENCE_NCBI))
         else:
            logging.warning(f"NCBI taxdump is missing at {REFERENCE_NCBI}")
            logging.warning("Consider getting from https://github.com/yamaton/fishbase-scraper/raw/main/ncbi_taxdump/ncbi_names.txt.gz")
+    logging.debug("... Done loading NCBI taxdump")
+
 
     machine = Corrector(corpus, ncbi_corpus, num_mutations)
     ## Suggest based on genus-species pair similarity
     try:
         from pathos.multiprocessing import ProcessingPool as Pool
-        pool = Pool()
+        from pathos.multiprocessing import cpu_count
+        nodes = args.cpus if args.cpus > 0 else cpu_count()
+        pool = Pool(nodes=nodes)
         results = pool.map(machine.run, names)
     except ImportError:
         logging.warning("Package pathos is not found. Running without parallelization...")
-        results = map(machine.run, names)
+        total = len(names)
+        results = []
+        for i, name in enumerate(names, 1):
+            logging.info(f"Processing {i:>4}/{total}: {name}")
+            res = machine.run(name)
+            results.append(res)
 
+    logging.debug(f"{[x.input for x in results]}")
     report(results)
+    if output_filename:
+        to_csv(results, output_filename)
