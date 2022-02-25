@@ -26,12 +26,14 @@ import collections
 import gzip
 import json
 import logging
+from mimetypes import init
 import pathlib
+import re
 import subprocess
 import urllib.parse
 import urllib.request
 import itertools as it
-from typing import Union, Set
+from typing import Iterable, Union, Set, List
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
@@ -39,6 +41,11 @@ REFERENCE_NCBI =  BASEDIR / "ncbi_taxdump" / "ncbi_names.txt.gz"
 
 # unknown output representation
 UNKNOWN = "?????"
+PROVIDER_FISHBASE = "FishBase"
+PROVIDER_WORMS = "WoRMS"
+PROVIDER_NCBI_TAXDUMP = "NCBI Taxdump"
+PROVIDER_SPELL_CORRECTOR = "misspelling"
+NO_PROVIDER = ""
 
 # logging format and level
 logging.basicConfig(
@@ -46,11 +53,11 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Data structure for name-correction state
-#    `input`:  scientific name entered by user
-#    `output`: scientific name corrected. Can be identical to `input`
-#    `doneby`: correction provider. Can be ``, `spell-cheker`, `WoRMS`, `NCBI`.
-Correction = collections.namedtuple('Correction', ['input', 'output', 'doneby'])
+# Data structure for name-correction result
+#    `input`:    scientific name entered by user
+#    `output`:   scientific name corrected. Can be identical to `input`
+#    `provider`: correction provider. Can be "FishBase", "WoRMS", ...
+Result = collections.namedtuple('Result', ['input', 'output', 'provider'])
 
 
 def get_suggestion_worm(scientific_name: str) -> str:
@@ -89,7 +96,6 @@ def get_suggestion_worm(scientific_name: str) -> str:
         raw = response.read()
     logging.debug(f"{raw = }")
     if not raw:
-        logging.warning(f"WoRMS failed to answer: {scientific_name}")
         return UNKNOWN
 
     d = json.loads(raw)[0]
@@ -149,20 +155,20 @@ def download_all_fishbase_names():
     subprocess.run(f"bash {p.as_posix()} > {REFERENCE.as_posix()}", shell=True)
 
 
-def correct_spelling(sample: str, allnames: Set[str], num_attempts: int) -> str:
+def correct_spelling(sample: str, corpus: Set[str], num_attempts: int) -> str:
     if num_attempts < 3:
-        if sample in allnames:
+        if sample in corpus:
             return sample
 
         bag = {sample}
         for _ in range(num_attempts):
             bag = _update(bag)
             for x in bag:
-                if x in allnames:
+                if x in corpus:
                     return x
         return UNKNOWN
 
-    candidate = min(allnames, key=lambda x: _levenshtein(sample, x))
+    candidate = min(corpus, key=lambda x: _levenshtein(sample, x))
     return candidate if _levenshtein(sample, candidate) <= num_attempts else UNKNOWN
 
 
@@ -196,6 +202,43 @@ def load_names(p: Union[str, pathlib.Path]) -> Set[str]:
     return names
 
 
+class Corrector(object):
+    def __init__(self, corpus: Set[str], ncbi_corpus: Set[str], num_spelling_mutation: int) -> None:
+        self.corpus = corpus
+        self.ncbi_corpus = ncbi_corpus
+        self.num_mutation = num_spelling_mutation
+
+    def run(self, s: str) -> Result:
+        if s in self.corpus:
+            return Result(s, s, PROVIDER_FISHBASE)
+
+        result_worms = get_suggestion_worm(s)
+        if result_worms != UNKNOWN:
+            return Result(s, result_worms, PROVIDER_WORMS)
+
+        result_spell = correct_spelling(s, self.corpus, self.num_mutation)
+        if result_spell != UNKNOWN:
+            return Result(s, result_spell, PROVIDER_SPELL_CORRECTOR)
+
+        if s in self.ncbi_corpus:
+            return Result(s, s, PROVIDER_NCBI_TAXDUMP)
+
+        return Result(s, UNKNOWN, NO_PROVIDER)
+
+
+def report(results: Iterable[Result]):
+    xs = list(results)
+    num_entries = len(xs)
+    matched = sum(1 for x in xs if x.provider == PROVIDER_FISHBASE)
+    logging.info(f"Found exact matching in FishBase:  {matched} out of {num_entries}")
+
+    not_in_fishbase = [x for x in xs if x.provider != PROVIDER_FISHBASE]
+    logging.info(f"Suggested names for the rest of {len(not_in_fishbase)} entries:")
+
+    for x in not_in_fishbase:
+        print(f"{x.provider:12}: {normalize(x.input):30}\t-->\t{normalize(x.output)}")
+
+
 if __name__ == "__main__":
     if not REFERENCE.exists():
         logging.info(f"File not found: {REFERENCE}")
@@ -227,48 +270,24 @@ if __name__ == "__main__":
     use_ncbi_taxdump = args.ncbi
     use_worms = args.worms
 
-    allnames = load_names(REFERENCE)
+    corpus = load_names(REFERENCE)
     names = load_names(args.file)
-    ncbi_names = set()
+    ncbi_corpus = set()
     if use_ncbi_taxdump:
         if REFERENCE_NCBI.exists():
-            ncbi_names = load_names(REFERENCE_NCBI)
+            ncbi_corpus = load_names(REFERENCE_NCBI)
         else:
            logging.warning(f"NCBI taxdump is missing at {REFERENCE_NCBI}")
            logging.warning("Consider getting from https://github.com/yamaton/fishbase-scraper/raw/main/ncbi_taxdump/ncbi_names.txt.gz")
 
-    not_found = sorted(names - allnames)
-    ## Report summary
-    num_entries = len(names)
-    matched = len(names & allnames)
-    unmatched = num_entries - matched
-    logging.info(f"Found exact matching in FishBase:  {matched} out of {num_entries}")
-    logging.info(f"Suggested names for the rest of {len(not_found)} entries:")
-
-    allgenus, allspecies = zip(*[x.split() for x in allnames])
-    allgenus = set(allgenus)
-    allspecies = set(allspecies)
-
+    machine = Corrector(corpus, ncbi_corpus, num_mutations)
     ## Suggest based on genus-species pair similarity
     try:
         from pathos.multiprocessing import ProcessingPool as Pool
         pool = Pool()
-        if use_worms:
-            suggestions = pool.map(get_suggestion_worm, not_found)
-        else:
-            suggestions = pool.map(lambda name: correct_spelling(name, allnames, num_mutations), not_found)
+        results = pool.map(machine.run, names)
     except ImportError:
         logging.warning("Package pathos is not found. Running without parallelization...")
-        if use_worms:
-            suggestions = (get_suggestion_worm(name) for name in not_found)
-        else:
-            suggestions = (correct_spelling(name, allnames, num_mutations) for name in not_found)
-    for name, suggestion in zip(not_found, suggestions):
-        if suggestion == UNKNOWN:
-            if name in ncbi_names:
-                suggestion = "[FOUND in NCBI taxdump; unavailable in FishBase]"
-            else:
-                genus, species = name.split()
-                if genus in allgenus and species in allspecies:
-                    suggestion = "[OK by words; not found in FishBase]"
-        print(f"{normalize(name)}\t-->\t{normalize(suggestion)}")
+        results = map(machine.run, names)
+
+    report(results)
