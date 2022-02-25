@@ -181,7 +181,7 @@ def normalize(s: str) -> str:
             return False
 
         if len(s.split()) != 2:
-            logging.warning(f"Something irregular in name?: {s}")
+            logging.warning(f"Irregular name?: {s}")
             return False
 
         return True
