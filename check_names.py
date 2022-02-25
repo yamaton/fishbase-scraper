@@ -23,11 +23,15 @@ Replace Levenshtein with Damerau–Levenshtein to fix this inconsistencies in di
 
 import argparse
 import gzip
+import json
 import logging
 import pathlib
+from re import S
 import subprocess
+import urllib.parse
+import urllib.request
 import itertools as it
-from typing import Union, Set
+from typing import Union, Set, Optional
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
@@ -41,6 +45,60 @@ logging.basicConfig(
     format="[%(levelname)s] %(message)s",
     level=logging.INFO
 )
+
+
+def get_suggestion_worm(scientific_name: str) -> str:
+    """
+    Use WoRMS /AphiaRecordsByName/{ScientificName}
+    https://www.marinespecies.org/rest/
+    to get correction to the scientific name.
+
+    >>> worms_make_request("foo bar")
+    "?????"
+
+    >>> worms_make_request("Paraplotosus albilabrus")
+    "Paraplotosus albilabris"
+
+    >>> worms_make_request("Parupeneus cinnabarinus")
+    "Parupeneus heptacanthus"
+
+    """
+
+    def lint(scientific_name: str) -> str:
+        return " ".join(scientific_name.strip().split())
+
+
+    # curl -X GET "https://www.marinespecies.org/rest/AphiaRecordsByName/Parupeneus%20cinnabarinus?like=true&marine_only=true&offset=1" -H  "accept: */*"
+    query = urllib.parse.quote(lint(scientific_name))
+    url = f"https://www.marinespecies.org/rest/AphiaRecordsByName/{query}"
+    values = {
+        "like": True,
+        "marine_only": True,
+        "offset": 1,
+    }
+    data = urllib.parse.urlencode(values)
+    full_url = url + "?" + data
+    logging.debug(f"{full_url = }")
+    with urllib.request.urlopen(full_url) as response:
+        raw = response.read()
+    logging.debug(f"{raw = }")
+    if not raw:
+        logging.warning(f"WoRMS failed to answer: {scientific_name}")
+        return UNKNOWN
+
+    d = json.loads(raw)[0]
+    if "status" in d:
+        status = d["status"]
+        if status == "accepted":
+            return d["scientificname"]
+        elif status in ["unaccepted", "alternate representation"]:
+            return d["valid_name"]
+        else:
+            logging.warning(f"Got an unknown status: {scientific_name}: {status}")
+            return UNKNOWN
+
+    logging.warning(f"WoRMS's response lacks \"status\": {d}")
+    return UNKNOWN
 
 
 def levenshtein(s1: str, s2: str) -> int:
@@ -105,7 +163,13 @@ def get_suggestion(sample: str, allnames: Set[str], num_attempts: int) -> str:
 def normalize(s: str) -> str:
     if s.startswith("[") or s.startswith("?"):
         return s
-    genus, species = s.split()
+
+    splitted = s.split()
+    if len(splitted) != 2:
+        logging.warning(f"Something irregular in name?: {s}")
+        return s
+
+    genus, species = splitted
     genus = genus.capitalize()
     species = species.lower()
     return f"{genus} {species}"
@@ -137,12 +201,18 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--ncbi",
-        help="Check against NCBI taxonomy dump if failed to match Fishbase.",
+        help="Check against NCBI taxonomy dump if failed to find in Fishbase.",
+        action='store_true',
+    )
+    parser.add_argument(
+        "--worms",
+        help="Search with WoRMS if failed to find in Fishbase.",
         action='store_true',
     )
     args = parser.parse_args()
     num_mutations = args.distance
     use_ncbi_taxdump = args.ncbi
+    use_worms = args.worms
 
     allnames = load_names(REFERENCE)
     names = load_names(args.file)
@@ -170,10 +240,16 @@ if __name__ == "__main__":
     try:
         from pathos.multiprocessing import ProcessingPool as Pool
         pool = Pool()
-        suggestions = pool.map(lambda name: get_suggestion(name, allnames, num_mutations), not_found)
+        if use_worms:
+            suggestions = pool.map(get_suggestion_worm, not_found)
+        else:
+            suggestions = pool.map(lambda name: get_suggestion(name, allnames, num_mutations), not_found)
     except ImportError:
         logging.warning("Package pathos is not found. Running without parallelization...")
-        suggestions = (get_suggestion(name, allnames, num_mutations) for name in not_found)
+        if use_worms:
+            suggestions = (get_suggestion_worm(name) for name in not_found)
+        else:
+            suggestions = (get_suggestion(name, allnames, num_mutations) for name in not_found)
     for name, suggestion in zip(not_found, suggestions):
         if suggestion == UNKNOWN:
             if name in ncbi_names:
