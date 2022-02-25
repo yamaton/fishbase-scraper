@@ -22,36 +22,42 @@ Replace Levenshtein with Damerau–Levenshtein to fix this inconsistencies in di
 """
 
 import argparse
+import collections
 import gzip
 import json
 import logging
 import pathlib
-from re import S
 import subprocess
 import urllib.parse
 import urllib.request
 import itertools as it
-from typing import Union, Set, Optional
+from typing import Union, Set
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
 REFERENCE_NCBI =  BASEDIR / "ncbi_taxdump" / "ncbi_names.txt.gz"
 
-# unknown output
+# unknown output representation
 UNKNOWN = "?????"
 
-# set logging level
+# logging format and level
 logging.basicConfig(
     format="[%(levelname)s] %(message)s",
     level=logging.INFO
 )
 
+# Data structure for name-correction state
+#    `input`:  scientific name entered by user
+#    `output`: scientific name corrected. Can be identical to `input`
+#    `doneby`: correction provider. Can be ``, `spell-cheker`, `WoRMS`, `NCBI`.
+Correction = collections.namedtuple('Correction', ['input', 'output', 'doneby'])
+
 
 def get_suggestion_worm(scientific_name: str) -> str:
     """
-    Use WoRMS /AphiaRecordsByName/{ScientificName}
+    Use WoRMS webservice: /AphiaRecordsByName/{ScientificName}
+    to correct a scientific name.
     https://www.marinespecies.org/rest/
-    to get correction to the scientific name.
 
     >>> worms_make_request("foo bar")
     "?????"
@@ -101,7 +107,7 @@ def get_suggestion_worm(scientific_name: str) -> str:
     return UNKNOWN
 
 
-def levenshtein(s1: str, s2: str) -> int:
+def _levenshtein(s1: str, s2: str) -> int:
     """Calculate Levenshetein distance of two strings
     Copied from https://rosettacode.org/wiki/Levenshtein_distance#Iterative_2
     """
@@ -115,13 +121,13 @@ def levenshtein(s1: str, s2: str) -> int:
                 newDistances.append(distances[index1])
             else:
                 newDistances.append(1 + min((distances[index1],
-                                             distances[index1+1],
-                                             newDistances[-1])))
+                                            distances[index1+1],
+                                            newDistances[-1])))
         distances = newDistances
     return distances[-1]
 
 
-def mutate(word: str) -> Set[str]:
+def _mutate(word: str) -> Set[str]:
     """Mutate string"""
     letters = "abcdefghijklmnopqrstuvwxyz"
     splits = [(word[:i], word[i:]) for i in range(len(word) + 1)]
@@ -134,42 +140,49 @@ def mutate(word: str) -> Set[str]:
     return res
 
 
-def update(bag: Set[str]) -> Set[str]:
-    return {w_new for w in bag for w_new in mutate(w)}
+def _update(bag: Set[str]) -> Set[str]:
+    return {w_new for w in bag for w_new in _mutate(w)}
 
 
-def download():
+def download_all_fishbase_names():
     p = BASEDIR / "utils" / "collect_all_names.sh"
     subprocess.run(f"bash {p.as_posix()} > {REFERENCE.as_posix()}", shell=True)
 
 
-def get_suggestion(sample: str, allnames: Set[str], num_attempts: int) -> str:
+def correct_spelling(sample: str, allnames: Set[str], num_attempts: int) -> str:
     if num_attempts < 3:
         if sample in allnames:
             return sample
 
         bag = {sample}
         for _ in range(num_attempts):
-            bag = update(bag)
+            bag = _update(bag)
             for x in bag:
                 if x in allnames:
                     return x
         return UNKNOWN
 
-    candidate = min(allnames, key=lambda x: levenshtein(sample, x))
-    return candidate if levenshtein(sample, candidate) <= num_attempts else UNKNOWN
+    candidate = min(allnames, key=lambda x: _levenshtein(sample, x))
+    return candidate if _levenshtein(sample, candidate) <= num_attempts else UNKNOWN
 
 
 def normalize(s: str) -> str:
-    if s.startswith("[") or s.startswith("?"):
+    """Normalize scientific name `s`. Don't change otherwise.
+    """
+    def is_scientific_name(s: str) -> bool:
+        if s.startswith("[") or s.startswith("?"):
+            return False
+
+        if len(s.split()) != 2:
+            logging.warning(f"Something irregular in name?: {s}")
+            return False
+
+        return True
+
+    if not is_scientific_name(s):
         return s
 
-    splitted = s.split()
-    if len(splitted) != 2:
-        logging.warning(f"Something irregular in name?: {s}")
-        return s
-
-    genus, species = splitted
+    genus, species = s.split()
     genus = genus.capitalize()
     species = species.lower()
     return f"{genus} {species}"
@@ -185,11 +198,10 @@ def load_names(p: Union[str, pathlib.Path]) -> Set[str]:
 
 if __name__ == "__main__":
     if not REFERENCE.exists():
-        print(f"File not found: {REFERENCE}")
-        print(f"Running `bash utils/collect_all_names > ScientificNamesAll.txt` to create the list of all fish names.")
-        download()
-        print()
-        print("Saved all scientific names from FishBase as ScientificNamesAll.txt")
+        logging.info(f"File not found: {REFERENCE}")
+        logging.info(f"Running `bash utils/collect_all_names > ScientificNamesAll.txt` to create the list of all fish names.")
+        download_all_fishbase_names()
+        logging.info("Saved all scientific names from FishBase as ScientificNamesAll.txt")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("file", help="Input file")
@@ -210,6 +222,7 @@ if __name__ == "__main__":
         action='store_true',
     )
     args = parser.parse_args()
+
     num_mutations = args.distance
     use_ncbi_taxdump = args.ncbi
     use_worms = args.worms
@@ -243,13 +256,13 @@ if __name__ == "__main__":
         if use_worms:
             suggestions = pool.map(get_suggestion_worm, not_found)
         else:
-            suggestions = pool.map(lambda name: get_suggestion(name, allnames, num_mutations), not_found)
+            suggestions = pool.map(lambda name: correct_spelling(name, allnames, num_mutations), not_found)
     except ImportError:
         logging.warning("Package pathos is not found. Running without parallelization...")
         if use_worms:
             suggestions = (get_suggestion_worm(name) for name in not_found)
         else:
-            suggestions = (get_suggestion(name, allnames, num_mutations) for name in not_found)
+            suggestions = (correct_spelling(name, allnames, num_mutations) for name in not_found)
     for name, suggestion in zip(not_found, suggestions):
         if suggestion == UNKNOWN:
             if name in ncbi_names:
