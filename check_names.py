@@ -294,11 +294,12 @@ if __name__ == "__main__":
     logging.debug("Loadiing NCBI taxdump...")
     ncbi_corpus = set()
     if use_ncbi_taxdump:
-        if REFERENCE_NCBI.exists():
-            ncbi_corpus = set(load_names(REFERENCE_NCBI))
-        else:
-           logging.warning(f"NCBI taxdump is missing at {REFERENCE_NCBI}")
-           logging.warning("Consider getting from https://github.com/yamaton/fishbase-scraper/raw/main/ncbi_taxdump/ncbi_names.txt.gz")
+        logging.info("NCBI taxdump is currently hard-disabled due to issue with multiprocessing.")
+        # if REFERENCE_NCBI.exists():
+        #     ncbi_corpus = set(load_names(REFERENCE_NCBI))
+        # else:
+        #    logging.warning(f"NCBI taxdump is missing at {REFERENCE_NCBI}")
+        #    logging.warning("Consider getting from https://github.com/yamaton/fishbase-scraper/raw/main/ncbi_taxdump/ncbi_names.txt.gz")
     logging.debug("... Done loading NCBI taxdump")
 
 
