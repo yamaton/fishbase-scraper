@@ -26,7 +26,7 @@ $ conda activate fishbase
 
 ### 0. Clone this repository
 
-⚠️ Please install `git-lfs`⚠️  before cloning the repository as this it contains a binary file (gzip) managed by Git LFS. 
+⚠️ Please install `git-lfs`⚠️  before cloning the repository as this it contains a binary file (gzip) managed by Git LFS.
 
 ```shell
 # Ubuntu
@@ -80,7 +80,7 @@ $ python check_names.py list.txt --output check_names_result.csv
 
 
 
-**[Optional]** This name checker can search a name from NCBI taxdump when the name is not found in FishBase. To enable the feature, run with `--ncbi` option: 
+**[Optional]** This name checker can search a name from NCBI taxdump when the name is not found in FishBase. To enable the feature, run with `--ncbi` option:
 
 ```shell
 $ python check_names.py list.txt --ncbi
@@ -117,7 +117,7 @@ $ echo "Abalistes stellatus" | python scraper.py
 Practically, we would want to run this script against multiple species **in parallel**. We recommend using [GNU parallel](https://www.gnu.org/software/parallel/) for the job. (And activate conda environment in each of parallel processes.)
 
 ```shell
-$ cat list.txt | parallel "echo {} | python scraper.py" | sort > list.log
+$ cat list.txt | parallel --keep-order "echo {} | python scraper.py" > list.log
 ```
 
 Scraping can fail for various reasons (page not found, irregular page format, server too busy, network problems, etc.) so it's good practice to check the log after running the script. The log file `list.log`  contains tab-separated two columns. The first is the same as in `list.txt`. The second column contains either `OK` or `FAIL` as the scraping status. One can view just errors by filtering with `grep`.

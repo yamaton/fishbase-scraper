@@ -8,7 +8,7 @@ How to use:
     $ echo "Abalistes stellatus" | python scraper.py
 
     To process many in parallel, run following instead. (Install GNU parallel beforehand)
-    $ cat list.txt | parallel "conda activate fishbase && echo {} | python scraper.py" | sort > list.log
+    $ cat list.txt | parallel --keep-order echo {} | python scraper.py" > list.log
 
 """
 
