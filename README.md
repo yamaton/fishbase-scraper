@@ -58,7 +58,7 @@ Abudefduf sparoides
 **[Optional]** When dealing with multiple files, `utils/merge_and_keep_unique_names.py` might be helpful. This utility script merges files and removes duplicates.
 
 ```shell
-$ python utils/merge_and_keep_unique_names.py file1 file2 > list.txt
+$ python utils/merge_and_keep_unique_names.py file1 file2 file3 > list.txt
 ```
 
 
