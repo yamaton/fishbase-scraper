@@ -30,6 +30,7 @@ import logging
 import pathlib
 import subprocess
 import sys
+from urllib.error import HTTPError
 import urllib.parse
 import urllib.request
 import itertools as it
@@ -93,9 +94,15 @@ def get_suggestion_worm(scientific_name: str) -> str:
     data = urllib.parse.urlencode(values)
     full_url = url + "?" + data
     logging.debug(f"{full_url = }")
-    with urllib.request.urlopen(full_url) as response:
-        raw = response.read()
-    logging.debug(f"{raw = }")
+
+    try:
+        with urllib.request.urlopen(full_url) as response:
+            raw = response.read()
+        logging.debug(f"{raw = }")
+    except HTTPError:
+        logging.error(f"Got HTTPError from WoRMS: {scientific_name}")
+        return UNKNOWN
+
     if not raw:
         return UNKNOWN
 
@@ -107,7 +114,7 @@ def get_suggestion_worm(scientific_name: str) -> str:
         elif status in ["unaccepted", "alternate representation"]:
             return d["valid_name"]
         else:
-            logging.warning(f"Got an unknown status: {scientific_name}: {status}")
+            logging.warning(f"Got an unknown status ({status}): {scientific_name}")
             return UNKNOWN
 
     logging.warning(f"WoRMS's response lacks \"status\": {d}")
