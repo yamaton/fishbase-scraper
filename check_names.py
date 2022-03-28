@@ -3,10 +3,6 @@
 """
 Check if names in the given list are found in FishBase. Suggest correction, otherwise.
 
-Recommended dependencies:
-    - pathos
-    Install via either `pip install pathos` or `conda install -c conda-forge pathos`.
-
 Usage:
     $ python check_names.py merged_list.txt
 
@@ -100,7 +96,7 @@ def get_suggestion_worm(scientific_name: str) -> str:
             raw = response.read()
         logging.debug(f"{raw = }")
     except HTTPError:
-        logging.error(f"Got HTTPError from WoRMS: {scientific_name}")
+        logging.error(f"HTTPError from WoRMS: {scientific_name}")
         return UNKNOWN
 
     if not raw:
@@ -311,22 +307,13 @@ if __name__ == "__main__":
 
 
     machine = Corrector(corpus, ncbi_corpus, num_mutations)
-    ## Suggest based on genus-species pair similarity
-    try:
-        from pathos.multiprocessing import ProcessPool
-        from pathos.multiprocessing import cpu_count
-        nodes = num_cpus if num_cpus > 0 else cpu_count()
-        with ProcessPool(nodes=nodes) as pool:
-            results = pool.map(machine.run, names)
-
-    except ImportError:
-        logging.warning("Package pathos is not found. Running without parallelization...")
-        total = len(names)
-        results = []
-        for i, name in enumerate(names, 1):
-            sys.stderr.write(f"Progress: {i:>4}/{total}: {name}                                    \r")
-            res = machine.run(name)
-            results.append(res)
+    logging.warning("Package pathos is not found. Running without parallelization...")
+    total = len(names)
+    results = []
+    for i, name in enumerate(names, 1):
+        sys.stderr.write(f"Progress: {i:>4}/{total}: {name}                                                        \r")
+        res = machine.run(name)
+        results.append(res)
 
     logging.debug(f"{[x.input for x in results]}")
     report(results)

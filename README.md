@@ -12,12 +12,11 @@ The script scrapes [FishBase](https://fishbase.se/search.php) pages and extracts
 ## Requirements
 
 * beautifulsoup4
-* pathos [optional]
 
 If you are `conda` user, it's recommended to create a virtual environment with
 
 ```shell
-$ conda create -n fishbase -c conda-forge pathos beautifulsoup4
+$ conda create -n fishbase -c conda-forge beautifulsoup4
 $ conda activate fishbase
 ```
 
