@@ -30,7 +30,7 @@ from urllib.error import HTTPError
 import urllib.parse
 import urllib.request
 import itertools as it
-from typing import Iterable, Union, Set, List
+from typing import Any, Dict, Iterable, Union, Set, List
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
@@ -115,6 +115,110 @@ def get_suggestion_worm(scientific_name: str) -> str:
 
     logging.warning(f"WoRMS's response lacks \"status\": {d}")
     return UNKNOWN
+
+
+
+def to_chunks(xs: Iterable[Any], chunksize: int) -> List[List[Any]]:
+    """
+    Split an iterable into fixed-sized chunks
+
+    >>> to_chunks(range(10), 3)
+    [[0, 1, 2], [3, 4, 5], [6, 7, 8], [9]]
+    """
+    res = []
+    chunk = []
+    for x in xs:
+        chunk.append(x)
+        if len(chunk) == chunksize:
+            res.append(chunk)
+            chunk = []
+
+    if chunk:
+        res.append(chunk)
+    return res
+
+
+def get_suggestion_worm_batch(scientific_names: List[str], chunksize=500) -> Dict[str, str]:
+    """
+    Use WoRMS webservice: /AphiaRecordsByNames
+
+    """
+    res = dict()
+    chunks = to_chunks(scientific_names, chunksize)
+    for chunk in chunks:
+        d = _get_suggestion_worm_batch(chunk)
+        res.update(d)
+    return res
+
+
+def _get_suggestion_worm_batch(scientific_names: List[str]) -> Dict[str, str]:
+    """
+    Use WoRMS webservice: /AphiaRecordsByNames
+    to correct a scientific name.
+    https://www.marinespecies.org/rest/
+
+    >>> _get_suggestion_worm_batch(["foo bar", "Paraplotosus albilabrus", "Parupeneus cinnabarinus"])
+    ["?????", "Paraplotosus albilabris", "Parupeneus heptacanthus"]
+
+    """
+    assert len(scientific_names) <= 500
+    zeroinfo = {s: UNKNOWN for s in scientific_names}
+
+    def lint(scientific_name: str) -> str:
+        return " ".join(scientific_name.strip().split())
+
+    queries = ["scientificnames[]=" + urllib.parse.quote(lint(s)) for s in scientific_names]
+    query = "&".join(queries)
+
+    # curl -X GET "https://www.marinespecies.org/rest/AphiaRecordsByNames?scientificnames[]=foo%20bar&scientificnames[]=Paraplotosus%20albilabrus&scientificnames[]=Parupeneus%20cinnabarinus&like=false&marine_only=true" -H  "accept: */*"
+    url = f"https://www.marinespecies.org/rest/AphiaRecordsByNames?{query}"
+    values = {
+        "like": True,
+        "marine_only": True,
+    }
+    data = urllib.parse.urlencode(values)
+    full_url = url + "&" + data
+    logging.warn(f"{full_url = }")
+
+    try:
+        with urllib.request.urlopen(full_url) as response:
+            raw = response.read()
+        logging.debug(f"{raw = }")
+    except HTTPError:
+        logging.error(f"HTTPError from WoRMS ({len(scientific_names)} entries)")
+        return zeroinfo
+
+    if not raw:
+        logging.error(f"WoRMS returned empty?")
+        return zeroinfo
+
+    logging.warn(f"{raw = }")
+
+    res = dict()
+    xs = json.loads(raw)
+    if len(xs) != len(scientific_names):
+        logging.error("Number of responses do not agree with the number of queries.")
+        return zeroinfo
+
+    for name, items in zip(scientific_names, xs):
+        if not items:
+            res[name] = UNKNOWN
+            continue
+
+        d = items[0]
+        if "status" in d:
+            status = d["status"]
+            if status == "accepted":
+                res[name] = d["scientificname"]
+            elif status in ["unaccepted", "alternate representation"]:
+                res[name] = d["valid_name"]
+            else:
+                logging.warning(f"Got an unknown status ({status}): {name}")
+                res[name] = UNKNOWN
+        else:
+            logging.warning(f"WoRMS's response lacks \"status\": {d}")
+            res[name] = UNKNOWN
+    return res
 
 
 def _levenshtein(s1: str, s2: str) -> int:
@@ -213,6 +317,9 @@ class Corrector(object):
         self.num_mutation = num_spelling_mutation
 
     def run(self, s: str) -> Result:
+        """
+        Check scientific name
+        """
         if s in self.corpus:
             return Result(s, s, PROVIDER_FISHBASE)
 
@@ -230,7 +337,41 @@ class Corrector(object):
         return Result(s, UNKNOWN, NO_PROVIDER)
 
 
+    def run_many(self, ss: Iterable[str]) -> Dict[str, Result]:
+        """
+        Check scientific names as batch
+        """
+        ss = list(ss)
+        res = dict()
+        total = len(ss)
+        for s in ss:
+            if s in self.corpus:
+                res[s] = Result(s, s, PROVIDER_FISHBASE)
+        sys.stderr.write(f"Progress: {len(res):>4}/{total}:                                                            \r")
+
+        for s in ss:
+            if s not in res:
+                result_spell = correct_spelling(s, self.corpus, self.num_mutation)
+                if result_spell != UNKNOWN:
+                    res[s] = Result(s, result_spell, PROVIDER_SPELL_CORRECTOR)
+
+        rest = [s for s in ss if s not in res]
+        results_worms_batch = get_suggestion_worm_batch(rest)
+        for s, result_worms in results_worms_batch.items():
+            if result_worms != UNKNOWN:
+                res[s] = Result(s, result_worms, PROVIDER_WORMS)
+            elif s in self.ncbi_corpus:
+                res[s] = Result(s, s, PROVIDER_NCBI_TAXDUMP)
+            else:
+                res[s] = Result(s, UNKNOWN, NO_PROVIDER)
+        return res
+
+
+
 def report(results: Iterable[Result]):
+    """
+    Report results to standard output
+    """
     xs = list(results)
     num_entries = len(xs)
     matched = sum(1 for x in xs if x.provider == PROVIDER_FISHBASE)
@@ -309,11 +450,14 @@ if __name__ == "__main__":
     machine = Corrector(corpus, ncbi_corpus, num_mutations)
     logging.warning("Package pathos is not found. Running without parallelization...")
     total = len(names)
-    results = []
+    results: List[Result] = []
     for i, name in enumerate(names, 1):
         sys.stderr.write(f"Progress: {i:>4}/{total}: {name}                                                        \r")
         res = machine.run(name)
         results.append(res)
+
+    # res_dict = machine.run_many(names)
+    # results = [res_dict[name] for name in names]
 
     logging.debug(f"{[x.input for x in results]}")
     report(results)
