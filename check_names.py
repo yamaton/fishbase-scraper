@@ -30,7 +30,7 @@ from urllib.error import HTTPError
 import urllib.parse
 import urllib.request
 import itertools as it
-from typing import Any, Dict, Iterable, Union, Set, List
+from typing import Any, Dict, Iterable, Optional, Union, Set, List
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
@@ -138,7 +138,7 @@ def to_chunks(xs: Iterable[Any], chunksize: int) -> List[List[Any]]:
     return res
 
 
-def get_suggestion_worm_batch(scientific_names: List[str], chunksize=500) -> Dict[str, str]:
+def get_suggestion_worm_batch(scientific_names: List[str], chunksize=100) -> Dict[str, str]:
     """
     Use WoRMS webservice: /AphiaRecordsByNames
 
@@ -178,7 +178,7 @@ def _get_suggestion_worm_batch(scientific_names: List[str]) -> Dict[str, str]:
     }
     data = urllib.parse.urlencode(values)
     full_url = url + "&" + data
-    logging.warn(f"{full_url = }")
+    logging.debug(f"{full_url = }")
 
     try:
         with urllib.request.urlopen(full_url) as response:
@@ -189,10 +189,8 @@ def _get_suggestion_worm_batch(scientific_names: List[str]) -> Dict[str, str]:
         return zeroinfo
 
     if not raw:
-        logging.error(f"WoRMS returned empty?")
+        logging.error(f"WoRMS returned empty value.")
         return zeroinfo
-
-    logging.warn(f"{raw = }")
 
     res = dict()
     xs = json.loads(raw)
@@ -311,10 +309,11 @@ def load_names(p: Union[str, pathlib.Path]) -> List[str]:
 
 
 class Corrector(object):
-    def __init__(self, corpus: Set[str], ncbi_corpus: Set[str], num_spelling_mutation: int) -> None:
+    def __init__(self, corpus: Set[str], ncbi_corpus: Set[str], num_spelling_mutation: int, num_cpus: Optional[int]=None) -> None:
         self.corpus = corpus
         self.ncbi_corpus = ncbi_corpus
         self.num_mutation = num_spelling_mutation
+        self.num_cpus = num_cpus
 
     def run(self, s: str) -> Result:
         """
@@ -342,30 +341,36 @@ class Corrector(object):
         Check scientific names as batch
         """
         ss = list(ss)
-        res = dict()
+        ans = dict()
         total = len(ss)
         for s in ss:
             if s in self.corpus:
-                res[s] = Result(s, s, PROVIDER_FISHBASE)
-        sys.stderr.write(f"Progress: {len(res):>4}/{total}:                                                            \r")
+                ans[s] = Result(s, s, PROVIDER_FISHBASE)
+        sys.stderr.write(f"Progress: {len(ans):>4}/{total}:                                                            \r")
 
-        for s in ss:
-            if s not in res:
-                result_spell = correct_spelling(s, self.corpus, self.num_mutation)
-                if result_spell != UNKNOWN:
-                    res[s] = Result(s, result_spell, PROVIDER_SPELL_CORRECTOR)
+        rest = [s for s in ss if s not in ans]
+        try:
+            import pathos.multiprocessing
+            with pathos.multiprocessing.ProcessPool(nodes=self.num_cpus) as p:
+                results_spell = p.map(lambda s: correct_spelling(s, self.corpus, self.num_mutation), rest)
+        except ImportError:
+            logging.info("pathos is missing; Install pathos to enable multiprocessing...")
+            results_spell = [correct_spelling(s, self.corpus, self.num_mutation) for s in rest]
 
-        rest = [s for s in ss if s not in res]
+        for s, result_spell in zip(rest, results_spell):
+            if result_spell != UNKNOWN:
+                ans[s] = Result(s, result_spell, PROVIDER_SPELL_CORRECTOR)
+
+        rest = [s for s in ss if s not in ans]
         results_worms_batch = get_suggestion_worm_batch(rest)
         for s, result_worms in results_worms_batch.items():
             if result_worms != UNKNOWN:
-                res[s] = Result(s, result_worms, PROVIDER_WORMS)
+                ans[s] = Result(s, result_worms, PROVIDER_WORMS)
             elif s in self.ncbi_corpus:
-                res[s] = Result(s, s, PROVIDER_NCBI_TAXDUMP)
+                ans[s] = Result(s, s, PROVIDER_NCBI_TAXDUMP)
             else:
-                res[s] = Result(s, UNKNOWN, NO_PROVIDER)
-        return res
-
+                ans[s] = Result(s, UNKNOWN, NO_PROVIDER)
+        return ans
 
 
 def report(results: Iterable[Result]):
@@ -423,11 +428,16 @@ if __name__ == "__main__":
         help="Number of CPU cores to use; set -1 to use all. (default: %(default)s)",
         type=int,
         metavar="<int>",
-        default=-1
+        default=-1,
+    )
+    parser.add_argument(
+        "--fast",
+        help="Run faster by processing as a batch",
+        action="store_true",
     )
     args = parser.parse_args()
     output_filename = args.output
-    num_cpus = args.num_cpus
+    num_cpus = args.num_cpus if args.num_cpus > 0 else None
     num_mutations = args.distance
     use_ncbi_taxdump = args.ncbi
 
@@ -447,17 +457,18 @@ if __name__ == "__main__":
     logging.debug("... Done loading NCBI taxdump")
 
 
-    machine = Corrector(corpus, ncbi_corpus, num_mutations)
-    logging.warning("Package pathos is not found. Running without parallelization...")
+    machine = Corrector(corpus, ncbi_corpus, num_mutations, num_cpus)
     total = len(names)
-    results: List[Result] = []
-    for i, name in enumerate(names, 1):
-        sys.stderr.write(f"Progress: {i:>4}/{total}: {name}                                                        \r")
-        res = machine.run(name)
-        results.append(res)
 
-    # res_dict = machine.run_many(names)
-    # results = [res_dict[name] for name in names]
+    if args.fast:
+        res_dict = machine.run_many(names)
+        results = [res_dict[name] for name in names]
+    else:
+        results: List[Result] = []
+        for i, name in enumerate(names, 1):
+            sys.stderr.write(f"Progress: {i:>4}/{total}: {name}                                                        \r")
+            res = machine.run(name)
+            results.append(res)
 
     logging.debug(f"{[x.input for x in results]}")
     report(results)
