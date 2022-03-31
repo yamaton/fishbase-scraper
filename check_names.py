@@ -36,6 +36,10 @@ BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
 REFERENCE_NCBI =  BASEDIR / "ncbi_taxdump" / "ncbi_names.txt.gz"
 
+# Symbol representing a name found in FishBase
+SYMBOL_FISHBASE = "🐟"
+SYMBOL_CONSENSUS = "😃"
+
 # unknown output representation
 UNKNOWN = "?????"
 PROVIDER_FISHBASE = "FishBase"
@@ -43,6 +47,9 @@ PROVIDER_WORMS = "WoRMS"
 PROVIDER_NCBI_TAXDUMP = "NCBI Taxdump"
 PROVIDER_SPELL_CORRECTOR = "misspelling"
 NO_PROVIDER = ""
+
+# Limit number of candidates from spell corrector
+SPELL_CORRECTOR_MAX_ITEMS = 3
 
 # logging format and level
 logging.basicConfig(
@@ -52,11 +59,13 @@ logging.basicConfig(
 )
 
 # Data structure for name-correction result
-#    `input`:    scientific name entered by user
-#    `output`:   scientific name corrected. Can be identical to `input`
-#    `provider`: correction provider. Can be "FishBase", "WoRMS", ...
-Result = collections.namedtuple('Result', ['input', 'output', 'provider'])
-
+#    `input`: (str)         Scientific name entered by user
+#    `ok`: (bool)           True iff the input is found in FishBase.
+#                           `worms` and `spellcorrector` are left blank if True.
+#    `worms`: (str)         Correction suggested by WoRMS
+#    `spellcorrector` (list of str)
+#                           Corrections suggested by the spell corrector..
+Result = collections.namedtuple('Result', ['input', 'ok', 'worms', 'spellcorrector'])
 
 def get_suggestion_worm(scientific_name: str) -> str:
     """
@@ -189,7 +198,7 @@ def _get_suggestion_worm_batch(scientific_names: List[str]) -> Dict[str, str]:
         return zeroinfo
 
     if not raw:
-        logging.error(f"WoRMS returned empty value.")
+        logging.info(f"WoRMS returned empty value. ({len(scientific_names)} items)")
         return zeroinfo
 
     res = dict()
@@ -261,21 +270,34 @@ def download_all_fishbase_names():
     subprocess.run(f"bash {p.as_posix()} > {REFERENCE.as_posix()}", shell=True)
 
 
-def correct_spelling(sample: str, corpus: Set[str], num_attempts: int) -> str:
+def correct_spelling(sample: str, corpus: Set[str], num_attempts: int) -> List[str]:
+    # Apply all possible mutations if num_attempts <= 2.
     if num_attempts < 3:
         if sample in corpus:
-            return sample
+            logging.warning(f"Spell correction should not be called for a valid word: {sample}")
+            return [sample]
 
         bag = {sample}
+        candidates = []
         for _ in range(num_attempts):
             bag = _update(bag)
             for x in bag:
                 if x in corpus:
-                    return x
-        return UNKNOWN
+                    candidates.append(x)
+            # Don't search for further mutations if some candidates are already found
+            if candidates:
+                break
 
-    candidate = min(corpus, key=lambda x: _levenshtein(sample, x))
-    return candidate if _levenshtein(sample, candidate) <= num_attempts else UNKNOWN
+    else:
+        # Compute levenshetein distance to all words in corpus if num_attempts >=3.
+        distances = {x: _levenshtein(sample, x) for x in corpus}
+        min_dist = min(distances.values())
+        candidates = [name for name, dist in distances.items() if dist == min_dist]
+
+
+    # Limit number of candidates
+    candidates = candidates[:SPELL_CORRECTOR_MAX_ITEMS]
+    return candidates
 
 
 def normalize(s: str) -> str:
@@ -286,7 +308,7 @@ def normalize(s: str) -> str:
             return False
 
         if len(s.split()) != 2:
-            logging.warning(f"Irregular name?: {s}")
+            logging.debug(f"Irregular name?: {s}")
             return False
 
         return True
@@ -320,20 +342,11 @@ class Corrector(object):
         Check scientific name
         """
         if s in self.corpus:
-            return Result(s, s, PROVIDER_FISHBASE)
+            return Result(s, True, "", [])
 
-        result_spell = correct_spelling(s, self.corpus, self.num_mutation)
-        if result_spell != UNKNOWN:
-            return Result(s, result_spell, PROVIDER_SPELL_CORRECTOR)
-
-        result_worms = get_suggestion_worm(s)
-        if result_worms != UNKNOWN:
-            return Result(s, result_worms, PROVIDER_WORMS)
-
-        if s in self.ncbi_corpus:
-            return Result(s, s, PROVIDER_NCBI_TAXDUMP)
-
-        return Result(s, UNKNOWN, NO_PROVIDER)
+        candids_spell = correct_spelling(s, self.corpus, self.num_mutation)
+        candid_worms = get_suggestion_worm(s)
+        return Result(s, False, candid_worms, candids_spell)
 
 
     def run_many(self, ss: Iterable[str]) -> Dict[str, Result]:
@@ -345,7 +358,7 @@ class Corrector(object):
         total = len(ss)
         for s in ss:
             if s in self.corpus:
-                ans[s] = Result(s, s, PROVIDER_FISHBASE)
+                ans[s] = Result(s, True, "", [])
         sys.stderr.write(f"Progress: {len(ans):>4}/{total}:                                                            \r")
 
         rest = [s for s in ss if s not in ans]
@@ -354,22 +367,15 @@ class Corrector(object):
             with pathos.multiprocessing.ProcessPool(nodes=self.num_cpus) as p:
                 results_spell = p.map(lambda s: correct_spelling(s, self.corpus, self.num_mutation), rest)
         except ImportError:
-            logging.info("pathos is missing; Install pathos to enable multiprocessing...")
+            logging.warning("pathos is missing; Install pathos to enable multiprocessing...")
             results_spell = [correct_spelling(s, self.corpus, self.num_mutation) for s in rest]
 
-        for s, result_spell in zip(rest, results_spell):
-            if result_spell != UNKNOWN:
-                ans[s] = Result(s, result_spell, PROVIDER_SPELL_CORRECTOR)
-
-        rest = [s for s in ss if s not in ans]
         results_worms_batch = get_suggestion_worm_batch(rest)
-        for s, result_worms in results_worms_batch.items():
-            if result_worms != UNKNOWN:
-                ans[s] = Result(s, result_worms, PROVIDER_WORMS)
-            elif s in self.ncbi_corpus:
-                ans[s] = Result(s, s, PROVIDER_NCBI_TAXDUMP)
-            else:
-                ans[s] = Result(s, UNKNOWN, NO_PROVIDER)
+
+        for s, candids_spell in zip(rest, results_spell):
+            candid_worms = results_worms_batch[s]
+            ans[s] = Result(s, False, candid_worms, candids_spell)
+
         return ans
 
 
@@ -379,21 +385,69 @@ def report(results: Iterable[Result]):
     """
     xs = list(results)
     num_entries = len(xs)
-    matched = sum(1 for x in xs if x.provider == PROVIDER_FISHBASE)
+    matched = sum(1 for x in xs if x.ok)
     logging.info(f"Found exact matching in FishBase:  {matched} out of {num_entries}")
 
-    not_in_fishbase = [x for x in xs if x.provider != PROVIDER_FISHBASE]
+    not_in_fishbase = [x for x in xs if not x.ok]
     logging.info(f"Suggested names for the rest of {len(not_in_fishbase)} entries:")
 
     for x in not_in_fishbase:
-        print(f"{x.provider:12}: {normalize(x.input):30}\t-->\t{normalize(x.output)}")
+        if is_in_concensus(x):
+            symbol = SYMBOL_CONSENSUS
+            correction = x.worms
+        else:
+            symbol = " "
+            candidates = [unknown_to_empty(x.worms)] + x.spellcorrector
+            correction = "  or  ".join({normalize(x) for x in candidates if x})
+            if not correction:
+                correction = UNKNOWN
+
+        print(f"{symbol}\t{normalize(x.input):38}\t-->\t{correction}")
 
 
 def to_csv(results: Iterable[Result], filename: Union[str, pathlib.Path]):
-    # fieldnames = ("original", "corrected", "provider")
+    # fieldnames = ("input", "In FishBase", "WoRMS", "spell checker 1", "spell checker 2", ...)
     with open(filename, "w", newline="") as csvfile:
         writer = csv.writer(csvfile, quoting=csv.QUOTE_MINIMAL)
-        writer.writerows(results)
+        rows = [result_to_row(res) for res in results]
+        writer.writerows(rows)
+
+
+def result_to_row(result: Result):
+    # 4 is form (Input name, Found in fishbase_status, In concensus, WoRMS result)
+    num_cols = 4 + SPELL_CORRECTOR_MAX_ITEMS
+    row = [""] * num_cols
+    row[0] = normalize(result.input)
+    if result.ok:
+        row[1] = SYMBOL_FISHBASE
+        return row
+
+    if is_in_concensus(result):
+        row[2] = SYMBOL_CONSENSUS
+        row[3] = result.worms
+
+    row[3] = unknown_to_empty(result.worms)
+    for i, item in enumerate(result.spellcorrector):
+        row[i + 4] = normalize(item)
+
+    if all(s == "" for s in row[3:]):
+        row[3] = UNKNOWN
+    return row
+
+
+def unknown_to_empty(s: str) -> str:
+    return "" if s == UNKNOWN else s
+
+
+def is_in_concensus(result: Result) -> bool:
+    if result.worms == UNKNOWN:
+        return False
+
+    candidates_spell = [normalize(candid) for candid in result.spellcorrector]
+    if len(result.spellcorrector) == 1 and normalize(result.worms) in candidates_spell:
+        return True
+
+    return False
 
 
 if __name__ == "__main__":
