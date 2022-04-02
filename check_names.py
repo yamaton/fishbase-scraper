@@ -23,7 +23,6 @@ import csv
 import gzip
 import json
 import logging
-from multiprocessing import get_start_method
 import pathlib
 import subprocess
 import sys
@@ -65,19 +64,19 @@ logging.basicConfig(
 Result = collections.namedtuple('Result', ['input', 'ok', 'worms', 'spellcorrector'])
 
 
-def get_suggestion_worm(scientific_name: str) -> str:
+def get_suggestion_worms(scientific_name: str) -> str:
     """
     Use WoRMS webservice: /AphiaRecordsByName/{ScientificName}
     to correct a scientific name.
     https://www.marinespecies.org/rest/
 
-    >>> get_suggestion_worm("foo bar")
+    >>> get_suggestion_worms("foo bar")
     ""
 
-    >>> get_suggestion_worm("Paraplotosus albilabrus")
+    >>> get_suggestion_worms("Paraplotosus albilabrus")
     "Paraplotosus albilabris"
 
-    >>> get_suggestion_worm("Parupeneus cinnabarinus")
+    >>> get_suggestion_worms("Parupeneus cinnabarinus")
     "Parupeneus heptacanthus"
 
     """
@@ -117,11 +116,16 @@ def get_suggestion_worm(scientific_name: str) -> str:
         elif status in ["unaccepted", "alternate representation"]:
             return d["valid_name"]
         else:
-            logging.warning(f"Got an unknown status ({status}): {scientific_name}")
+            logging.warning(f"Got an uncommon status ({status}): {scientific_name}")
             return UNKNOWN
 
     logging.warning(f"WoRMS's response lacks \"status\": {d}")
     return UNKNOWN
+
+
+def get_suggestion_worms_fuzzy(scientific_name: str) -> str:
+    d = get_suggestion_worms_fuzzy_batch([scientific_name])
+    return d[scientific_name]
 
 
 def to_chunks(xs: Iterable[Any], chunksize: int) -> List[List[Any]]:
@@ -144,7 +148,7 @@ def to_chunks(xs: Iterable[Any], chunksize: int) -> List[List[Any]]:
     return res
 
 
-def get_suggestion_worm_fuzzy(scientific_names: List[str], chunksize=50) -> Dict[str, str]:
+def get_suggestion_worms_fuzzy_batch(scientific_names: List[str], chunksize=50) -> Dict[str, str]:
     """
     Use WoRMS webservice: /AphiaRecordsByMatchNames
 
@@ -152,18 +156,18 @@ def get_suggestion_worm_fuzzy(scientific_names: List[str], chunksize=50) -> Dict
     res = dict()
     chunks = to_chunks(scientific_names, chunksize)
     for chunk in chunks:
-        d = _get_suggestion_worm_fuzzy(chunk)
+        d = _get_suggestion_worms_fuzzy_batch(chunk)
         res.update(d)
     return res
 
 
-def _get_suggestion_worm_fuzzy(scientific_names: List[str]) -> Dict[str, str]:
+def _get_suggestion_worms_fuzzy_batch(scientific_names: List[str]) -> Dict[str, str]:
     """
     Use WoRMS webservice: /AphiaRecordsByMatchNames
     to correct a scientific name.
     https://www.marinespecies.org/rest/
 
-    >>> _get_suggestion_worm_batch(["foo bar", "Paraplotosus albilabrus", "Parupeneus cinnabarinus"])
+    >>> _get_suggestion_worms_fuzzy_batch(["foo bar", "Paraplotosus albilabrus", "Parupeneus cinnabarinus"])
     ["?????", "Paraplotosus albilabris", "Parupeneus heptacanthus"]
 
     """
@@ -194,7 +198,6 @@ def _get_suggestion_worm_fuzzy(scientific_names: List[str]) -> Dict[str, str]:
         return zeroinfo
 
     if not raw:
-        logging.info(f"WoRMS (fuzzy) returned empty value. ({len(scientific_names)} items)")
         return zeroinfo
 
     res = dict()
@@ -224,7 +227,7 @@ def _get_suggestion_worm_fuzzy(scientific_names: List[str]) -> Dict[str, str]:
     return res
 
 
-def get_suggestion_worm_batch(scientific_names: List[str], chunksize=100) -> Dict[str, str]:
+def get_suggestion_worms_batch(scientific_names: List[str], chunksize=100) -> Dict[str, str]:
     """
     Use WoRMS webservice: /AphiaRecordsByNames
 
@@ -232,12 +235,12 @@ def get_suggestion_worm_batch(scientific_names: List[str], chunksize=100) -> Dic
     res = dict()
     chunks = to_chunks(scientific_names, chunksize)
     for chunk in chunks:
-        d = _get_suggestion_worm_batch(chunk)
+        d = _get_suggestion_worms_batch(chunk)
         res.update(d)
     return res
 
 
-def _get_suggestion_worm_batch(scientific_names: List[str]) -> Dict[str, str]:
+def _get_suggestion_worms_batch(scientific_names: List[str]) -> Dict[str, str]:
     """
     Use WoRMS webservice: /AphiaRecordsByNames
     to correct a scientific name.
@@ -422,7 +425,8 @@ class Corrector(object):
             return Result(s, True, "", [])
 
         candids_spell = correct_spelling(s, self.corpus, self.num_mutation)
-        candid_worms = get_suggestion_worm(s)
+        candid_worms = get_suggestion_worms_fuzzy(s)
+        # candid_worms = get_suggestion_worms(s)
         return Result(s, False, candid_worms, candids_spell)
 
 
@@ -436,9 +440,9 @@ class Corrector(object):
         for s in ss:
             if s in self.corpus:
                 ans[s] = Result(s, True, "", [])
-        sys.stderr.write(f"Progress: {len(ans):>4}/{total}:                                                            \r")
 
         rest = [s for s in ss if s not in ans]
+        logging.info("Running queries to WoRMS")
         try:
             import pathos.multiprocessing
             with pathos.multiprocessing.ProcessPool(nodes=self.num_cpus) as p:
@@ -447,8 +451,8 @@ class Corrector(object):
             logging.warning("pathos is missing; Install pathos to enable multiprocessing...")
             results_spell = [correct_spelling(s, self.corpus, self.num_mutation) for s in rest]
 
-        results_worms_batch = get_suggestion_worm_batch(rest)
-
+        logging.info("Sending queries to WoRMS")
+        results_worms_batch = get_suggestion_worms_fuzzy_batch(rest)
         for s, candids_spell in zip(rest, results_spell):
             candid_worms = results_worms_batch[s]
             ans[s] = Result(s, False, candid_worms, candids_spell)
