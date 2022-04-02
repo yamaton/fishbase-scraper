@@ -144,6 +144,86 @@ def to_chunks(xs: Iterable[Any], chunksize: int) -> List[List[Any]]:
     return res
 
 
+def get_suggestion_worm_fuzzy(scientific_names: List[str], chunksize=50) -> Dict[str, str]:
+    """
+    Use WoRMS webservice: /AphiaRecordsByMatchNames
+
+    """
+    res = dict()
+    chunks = to_chunks(scientific_names, chunksize)
+    for chunk in chunks:
+        d = _get_suggestion_worm_fuzzy(chunk)
+        res.update(d)
+    return res
+
+
+def _get_suggestion_worm_fuzzy(scientific_names: List[str]) -> Dict[str, str]:
+    """
+    Use WoRMS webservice: /AphiaRecordsByMatchNames
+    to correct a scientific name.
+    https://www.marinespecies.org/rest/
+
+    >>> _get_suggestion_worm_batch(["foo bar", "Paraplotosus albilabrus", "Parupeneus cinnabarinus"])
+    ["?????", "Paraplotosus albilabris", "Parupeneus heptacanthus"]
+
+    """
+    assert len(scientific_names) <= 500
+    zeroinfo = {s: UNKNOWN for s in scientific_names}
+
+    def lint(scientific_name: str) -> str:
+        return " ".join(scientific_name.strip().split())
+
+    queries = ["scientificnames[]=" + urllib.parse.quote(lint(s)) for s in scientific_names]
+    query = "&".join(queries)
+
+    # curl -X GET "https://www.marinespecies.org/rest/AphiaRecordsByMatchNames?scientificnames[]=foo%20bar&scientificnames[]=Paraplotosus%20albilabrus&scientificnames[]=Parupeneus%20cinnabarinus&like=false&marine_only=true" -H  "accept: */*"
+    url = f"https://www.marinespecies.org/rest/AphiaRecordsByMatchNames?{query}"
+    values = {
+        "marine_only": True,
+    }
+    data = urllib.parse.urlencode(values)
+    full_url = url + "&" + data
+    logging.debug(f"{full_url = }")
+
+    try:
+        with urllib.request.urlopen(full_url) as response:
+            raw = response.read()
+        logging.debug(f"{raw = }")
+    except HTTPError:
+        logging.error(f"HTTPError from WoRMS (fuzzy)  ({len(scientific_names)} entries)")
+        return zeroinfo
+
+    if not raw:
+        logging.info(f"WoRMS (fuzzy) returned empty value. ({len(scientific_names)} items)")
+        return zeroinfo
+
+    res = dict()
+    xs = json.loads(raw)
+    if len(xs) != len(scientific_names):
+        logging.error("[WoRMS (fuzzy)] Number of responses do not agree with the number of queries.")
+        return zeroinfo
+
+    for name, items in zip(scientific_names, xs):
+        if not items:
+            res[name] = UNKNOWN
+            continue
+
+        d = items[0]
+        if "status" in d:
+            status = d["status"]
+            if status == "accepted":
+                res[name] = d["scientificname"]
+            elif status in ["unaccepted", "alternate representation"]:
+                res[name] = d["valid_name"]
+            else:
+                logging.warning(f"Got an unknown status ({status}): {name}")
+                res[name] = UNKNOWN
+        else:
+            logging.warning(f"WoRMS-fuzzy's response lacks \"status\": {d}")
+            res[name] = UNKNOWN
+    return res
+
+
 def get_suggestion_worm_batch(scientific_names: List[str], chunksize=100) -> Dict[str, str]:
     """
     Use WoRMS webservice: /AphiaRecordsByNames
