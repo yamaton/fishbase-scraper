@@ -23,6 +23,7 @@ import csv
 import gzip
 import json
 import logging
+from multiprocessing import get_start_method
 import pathlib
 import subprocess
 import sys
@@ -39,14 +40,10 @@ REFERENCE_NCBI =  BASEDIR / "ncbi_taxdump" / "ncbi_names.txt.gz"
 # Symbol representing a name found in FishBase
 SYMBOL_FISHBASE = "🐟"
 SYMBOL_CONSENSUS = "😃"
+SYMBOL_NOIDEA = "❓"
 
 # unknown output representation
-UNKNOWN = "?????"
-PROVIDER_FISHBASE = "FishBase"
-PROVIDER_WORMS = "WoRMS"
-PROVIDER_NCBI_TAXDUMP = "NCBI Taxdump"
-PROVIDER_SPELL_CORRECTOR = "misspelling"
-NO_PROVIDER = ""
+UNKNOWN = SYMBOL_NOIDEA
 
 # Limit number of candidates from spell corrector
 SPELL_CORRECTOR_MAX_ITEMS = 3
@@ -67,19 +64,20 @@ logging.basicConfig(
 #                           Corrections suggested by the spell corrector..
 Result = collections.namedtuple('Result', ['input', 'ok', 'worms', 'spellcorrector'])
 
+
 def get_suggestion_worm(scientific_name: str) -> str:
     """
     Use WoRMS webservice: /AphiaRecordsByName/{ScientificName}
     to correct a scientific name.
     https://www.marinespecies.org/rest/
 
-    >>> worms_make_request("foo bar")
-    "?????"
+    >>> get_suggestion_worm("foo bar")
+    ""
 
-    >>> worms_make_request("Paraplotosus albilabrus")
+    >>> get_suggestion_worm("Paraplotosus albilabrus")
     "Paraplotosus albilabris"
 
-    >>> worms_make_request("Parupeneus cinnabarinus")
+    >>> get_suggestion_worm("Parupeneus cinnabarinus")
     "Parupeneus heptacanthus"
 
     """
@@ -124,7 +122,6 @@ def get_suggestion_worm(scientific_name: str) -> str:
 
     logging.warning(f"WoRMS's response lacks \"status\": {d}")
     return UNKNOWN
-
 
 
 def to_chunks(xs: Iterable[Any], chunksize: int) -> List[List[Any]]:
@@ -392,17 +389,14 @@ def report(results: Iterable[Result]):
     logging.info(f"Suggested names for the rest of {len(not_in_fishbase)} entries:")
 
     for x in not_in_fishbase:
+        emoji = result_as_emoji(x)
         if is_in_concensus(x):
-            symbol = SYMBOL_CONSENSUS
             correction = x.worms
         else:
-            symbol = " "
             candidates = [unknown_to_empty(x.worms)] + x.spellcorrector
-            correction = "  or  ".join({normalize(x) for x in candidates if x})
-            if not correction:
-                correction = UNKNOWN
+            correction = "  or  ".join({normalize(x) for x in candidates if x.strip()})
 
-        print(f"{symbol}\t{normalize(x.input):38}\t-->\t{correction}")
+        print(f"{emoji}\t{normalize(x.input):38}\t-->\t{correction}")
 
 
 def to_csv(results: Iterable[Result], filename: Union[str, pathlib.Path]):
@@ -413,25 +407,29 @@ def to_csv(results: Iterable[Result], filename: Union[str, pathlib.Path]):
         writer.writerows(rows)
 
 
-def result_to_row(result: Result):
-    # 4 is form (Input name, Found in fishbase_status, In concensus, WoRMS result)
-    num_cols = 4 + SPELL_CORRECTOR_MAX_ITEMS
-    row = [""] * num_cols
-    row[0] = normalize(result.input)
+def result_as_emoji(result: Result) -> str:
+    """Get status in emoji or empty string"""
     if result.ok:
-        row[1] = SYMBOL_FISHBASE
-        return row
+        return SYMBOL_FISHBASE
 
     if is_in_concensus(result):
-        row[2] = SYMBOL_CONSENSUS
-        row[3] = result.worms
+        return SYMBOL_CONSENSUS
 
-    row[3] = unknown_to_empty(result.worms)
+    if result.worms == UNKNOWN and (not result.spellcorrector):
+        return SYMBOL_NOIDEA
+
+    return ""
+
+
+def result_to_row(result: Result):
+    # 4 is form (Input name, Status, WoRMS result)
+    num_cols = 3 + SPELL_CORRECTOR_MAX_ITEMS
+    row = [""] * num_cols
+    row[0] = normalize(result.input)
+    row[1] = result_as_emoji(result)
+    row[2] = unknown_to_empty(result.worms)
     for i, item in enumerate(result.spellcorrector):
-        row[i + 4] = normalize(item)
-
-    if all(s == "" for s in row[3:]):
-        row[3] = UNKNOWN
+        row[i + 3] = normalize(item)
     return row
 
 
