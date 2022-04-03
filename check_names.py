@@ -155,7 +155,9 @@ def get_suggestion_worms_fuzzy_batch(scientific_names: List[str], chunksize=50) 
     """
     res = dict()
     chunks = to_chunks(scientific_names, chunksize)
-    for chunk in chunks:
+    logging.info("Sending batch queries to WoRMS")
+    for i, chunk in enumerate(chunks, 1):
+        sys.stderr.write(f"     Waiting {i:3}/{len(chunks)} ({chunksize} queries per request)                                                \r")
         d = _get_suggestion_worms_fuzzy_batch(chunk)
         res.update(d)
     return res
@@ -234,7 +236,8 @@ def get_suggestion_worms_batch(scientific_names: List[str], chunksize=100) -> Di
     """
     res = dict()
     chunks = to_chunks(scientific_names, chunksize)
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks, 1):
+        sys.stderr.write(f"     Waiting {i:3}/{len(chunks)} ({chunksize} queries per request)                                                \r")
         d = _get_suggestion_worms_batch(chunk)
         res.update(d)
     return res
@@ -394,7 +397,7 @@ def normalize(s: str) -> str:
         return True
 
     if not is_scientific_name(s):
-        return s
+        return s.lower().capitalize()
 
     genus, species = s.split()
     genus = genus.capitalize()
@@ -436,19 +439,20 @@ class Corrector(object):
         """
         ss = list(ss)
         ans = dict()
-        total = len(ss)
         for s in ss:
             if s in self.corpus:
                 ans[s] = Result(s, True, "", [])
 
         rest = [s for s in ss if s not in ans]
-        logging.info("Running queries to WoRMS")
+        logging.info(f"Running spell correction ({len(rest)} items)")
         try:
             import pathos.multiprocessing
+            num_cpus = pathos.multiprocessing.cpu_count() if self.num_cpus is None else self.num_cpus
+            logging.info(f"    Parallel processing with {num_cpus} CPUs")
             with pathos.multiprocessing.ProcessPool(nodes=self.num_cpus) as p:
                 results_spell = p.map(lambda s: correct_spelling(s, self.corpus, self.num_mutation), rest)
         except ImportError:
-            logging.warning("pathos is missing; Install pathos to enable multiprocessing...")
+            logging.warning("    pathos is missing; Install pathos to enable parallel processing.")
             results_spell = [correct_spelling(s, self.corpus, self.num_mutation) for s in rest]
 
         logging.info("Sending queries to WoRMS")
