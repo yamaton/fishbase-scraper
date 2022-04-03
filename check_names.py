@@ -575,6 +575,11 @@ if __name__ == "__main__":
         help="Run faster by processing as a batch",
         action="store_true",
     )
+    parser.add_argument(
+        "--onebyone",
+        help="Run name correction one by one",
+        action="store_true",
+    )
     args = parser.parse_args()
     output_filename = args.output
     num_cpus = args.num_cpus if args.num_cpus > 0 else None
@@ -600,7 +605,7 @@ if __name__ == "__main__":
     machine = Corrector(corpus, ncbi_corpus, num_mutations, num_cpus)
     total = len(names)
 
-    if args.fast:
+    if (not args.onebyone) or args.fast:
         res_dict = machine.run_many(names)
         results = [res_dict[name] for name in names]
     else:
