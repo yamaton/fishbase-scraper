@@ -397,9 +397,9 @@ def normalize(s: str) -> str:
         return True
 
     if not is_scientific_name(s):
-        return s.lower().capitalize()
+        return " ".join(s.strip().split()).capitalize()
 
-    genus, species = s.split()
+    genus, species = s.strip().split()
     genus = genus.capitalize()
     species = species.lower()
     return f"{genus} {species}"
