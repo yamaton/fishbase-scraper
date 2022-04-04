@@ -155,7 +155,6 @@ def get_suggestion_worms_fuzzy_batch(scientific_names: List[str], chunksize=50) 
     """
     res = dict()
     chunks = to_chunks(scientific_names, chunksize)
-    logging.info("Sending batch queries to WoRMS")
     for i, chunk in enumerate(chunks, 1):
         sys.stderr.write(f"     Waiting {i:3}/{len(chunks)} ({chunksize} queries per request)                                                \r")
         d = _get_suggestion_worms_fuzzy_batch(chunk)
