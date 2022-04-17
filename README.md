@@ -12,11 +12,13 @@ The script scrapes [FishBase](https://fishbase.se/search.php) pages and extracts
 ## Requirements
 
 * beautifulsoup4
+* entrez-direct
 
 If you are `conda` user, it's recommended to create a virtual environment with
 
 ```shell
 $ conda create -n fishbase -c conda-forge beautifulsoup4
+$ conda install -c bioconda entrez-direct
 $ conda activate fishbase
 ```
 
@@ -24,16 +26,6 @@ $ conda activate fishbase
 ## Using the scripts
 
 ### 0. Clone this repository
-
-⚠️ Please install `git-lfs`⚠️  before cloning the repository as this it contains a binary file (gzip) managed by Git LFS.
-
-```shell
-# Ubuntu
-$ sudo apt install git-lfs
-
-# MacOS
-$ brew install git-lfs
-```
 
 Clone this repository and enter the directory.
 
@@ -70,30 +62,24 @@ $ python check_names.py list.txt
 ```
 
 
-
 To save the corrections in CSV,  you may add `--output <file.csv>`
 
 ```shell
 $ python check_names.py list.txt --output check_names_result.csv
 ```
 
-
-
-**[Optional]** This name checker can search a name from NCBI taxdump when the name is not found in FishBase. To enable the feature, run with `--ncbi` option:
-
-```shell
-$ python check_names.py list.txt --ncbi
-```
-
-
-
-**[Optional]** If you want to save the corrections as CSV, a pipe like this might be useful; the first column has the original names, and the second column has suggested names. Failed suggestions are either `[OK by words; not found in FishBase]` or `?????`.
-
-```shell
-$ python check_names.py list.txt > suggestions.txt
-$ cat suggestions.txt | sed -r 's/\t-->\t/,/g' > suggestions.csv
-```
-
+Note that the CSV output contains seven columns.
+1. Original names in the `list.txt`
+2. Status of the name correction.
+    * 🐟: Found in FishBase
+    * 😃: Found correction as the concensus of multiple sources
+    * Empty: Multiple correction candidates exist.
+    * ❓: No idea
+3. Correction suggested by WoRMS
+4. Correction suggested by NCBI Taxonomy (via Entrez-direct)
+5. Correction suggested by the built-in spell corrector
+6. Another correction suggested by the spell corrector
+7. Yet another suggested by the spell corrector
 
 
 **[Optional]** This name checker automatically scrapes and downloads all scientific names in FishBase for reference. If you want to create the list of all fish names in FishBase, run
@@ -101,7 +87,6 @@ $ cat suggestions.txt | sed -r 's/\t-->\t/,/g' > suggestions.csv
 ```shell
 $ bash utils/collect_all_names.sh > ScientificNamesAll.txt
 ```
-
 
 
 ### 1. Scrape FishBase pages
