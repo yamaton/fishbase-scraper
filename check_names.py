@@ -59,6 +59,7 @@ logging.basicConfig(
 #    `ok`: (bool)           True iff the input is found in FishBase.
 #                           `worms` and `spellcorrector` are left blank if True.
 #    `worms`: (str)         Correction suggested by WoRMS
+#    `ncbi`: (str)          Correction suggested by NCBI Taxonomy via Entrez Direct
 #    `spellcorrector` (list of str)
 #                           Corrections suggested by the spell corrector..
 Result = collections.namedtuple('Result', ['input', 'ok', 'worms', 'ncbi', 'spellcorrector'])
