@@ -24,6 +24,7 @@ import gzip
 import json
 import logging
 import pathlib
+import shutil
 import subprocess
 import sys
 from urllib.error import HTTPError
@@ -61,6 +62,13 @@ logging.basicConfig(
 #    `spellcorrector` (list of str)
 #                           Corrections suggested by the spell corrector..
 Result = collections.namedtuple('Result', ['input', 'ok', 'worms', 'ncbi', 'spellcorrector'])
+
+
+def exists(cmd: str) -> bool:
+    """
+    Check if a system command exists.
+    """
+    return shutil.which(cmd) is not None
 
 
 def get_suggestion_worms(scientific_name: str) -> str:
@@ -635,6 +643,10 @@ if __name__ == "__main__":
     output_filename = args.output
     num_cpus = args.num_cpus if args.num_cpus > 0 else None
     num_mutations = args.distance
+
+    if (not exists("esearch") or (not exists("esummary"))):
+        logging.error("Entrez-direct is missing. Please install them like \n\n  $ conda install -c bioconda entrez-direct\n")
+        sys.exit(1)
 
     logging.debug("Loading all scientific names in FishBase")
     corpus = set(load_names(REFERENCE))
