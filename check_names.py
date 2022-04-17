@@ -30,11 +30,10 @@ from urllib.error import HTTPError
 import urllib.parse
 import urllib.request
 import itertools as it
-from typing import Any, Dict, Iterable, Optional, Union, Set, List
+from typing import Any, Callable, Dict, Iterable, Optional, Union, Set, List
 
 BASEDIR = pathlib.Path(__file__).resolve().parent
 REFERENCE = BASEDIR / "ScientificNamesAll.txt"
-REFERENCE_NCBI =  BASEDIR / "ncbi_taxdump" / "ncbi_names.txt.gz"
 
 # Symbol representing a name found in FishBase
 SYMBOL_FISHBASE = "🐟"
@@ -61,7 +60,7 @@ logging.basicConfig(
 #    `worms`: (str)         Correction suggested by WoRMS
 #    `spellcorrector` (list of str)
 #                           Corrections suggested by the spell corrector..
-Result = collections.namedtuple('Result', ['input', 'ok', 'worms', 'spellcorrector'])
+Result = collections.namedtuple('Result', ['input', 'ok', 'worms', 'ncbi', 'spellcorrector'])
 
 
 def get_suggestion_worms(scientific_name: str) -> str:
@@ -310,6 +309,40 @@ def _get_suggestion_worms_batch(scientific_names: List[str]) -> Dict[str, str]:
     return res
 
 
+def get_suggestion_ncbi_taxonomy(scientific_name: str) -> str:
+    """
+    Run Entrez-direct to get corrected scientific name.
+
+    This is effectively the same as following:
+
+    ```shell
+    esearch -db taxonomy -spell -query  "Apogon apogonides" | esummary -mode json | jq
+    ```
+
+    """
+    cmd = f"esearch -db taxonomy -spell -query \"{scientific_name}\" | esummary -mode json"
+    p = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE)
+    jsonstr = p.stdout.decode()
+    try:
+        d = json.loads(jsonstr)
+    except json.decoder.JSONDecodeError:
+        logging.debug(f"Failed to decode JSON from NCBI in resolving \"{scientific_name}\": {jsonstr}")
+        return ""
+
+    if "result" not in d:
+        logging.debug(f"NCBI Taxonomy does not contain 'result' for query \"{scientific_name}\": {jsonstr}")
+        return ""
+
+    result = d['result']
+    uids = result['uids']
+    scientific_names = [result[uid]["scientificname"] for uid in uids]
+
+    candidate = ""
+    if scientific_names:
+        candidate = scientific_names[0]
+    return candidate
+
+
 def _levenshtein(s1: str, s2: str) -> int:
     """Calculate Levenshetein distance of two strings
     Copied from https://rosettacode.org/wiki/Levenshtein_distance#Iterative_2
@@ -412,10 +445,22 @@ def load_names(p: Union[str, pathlib.Path]) -> List[str]:
     return names
 
 
+def run_in_parallel_if_possible(f: Callable[[str], Any], names: List[str], num_cpus: Optional[int]=None) -> List[Any]:
+    try:
+        import pathos.multiprocessing
+        num_cpus = pathos.multiprocessing.cpu_count() if num_cpus is None else num_cpus
+        logging.info(f"    .... processing with {num_cpus} CPUs")
+        with pathos.multiprocessing.ProcessPool(nodes=num_cpus) as p:
+            results = p.map(f, names)
+    except ImportError:
+        logging.warning("    pathos is missing; Install pathos to enable parallel processing.")
+        results = [f(s) for s in names]
+    return results
+
+
 class Corrector(object):
-    def __init__(self, corpus: Set[str], ncbi_corpus: Set[str], num_spelling_mutation: int, num_cpus: Optional[int]=None) -> None:
+    def __init__(self, corpus: Set[str], num_spelling_mutation: int, num_cpus: Optional[int]=None) -> None:
         self.corpus = corpus
-        self.ncbi_corpus = ncbi_corpus
         self.num_mutation = num_spelling_mutation
         self.num_cpus = num_cpus
 
@@ -424,12 +469,12 @@ class Corrector(object):
         Check scientific name
         """
         if s in self.corpus:
-            return Result(s, True, "", [])
+            return Result(s, True, "", "", [])
 
         candids_spell = correct_spelling(s, self.corpus, self.num_mutation)
         candid_worms = get_suggestion_worms_fuzzy(s)
-        # candid_worms = get_suggestion_worms(s)
-        return Result(s, False, candid_worms, candids_spell)
+        candid_ncbi = get_suggestion_ncbi_taxonomy(s)
+        return Result(s, False, candid_worms, candid_ncbi, candids_spell)
 
 
     def run_many(self, ss: Iterable[str]) -> Dict[str, Result]:
@@ -440,26 +485,32 @@ class Corrector(object):
         ans = dict()
         for s in ss:
             if s in self.corpus:
-                ans[s] = Result(s, True, "", [])
+                ans[s] = Result(s, True, "", "", [])
 
         rest = [s for s in ss if s not in ans]
         logging.info(f"Running spell correction ({len(rest)} items)")
-        try:
-            import pathos.multiprocessing
-            num_cpus = pathos.multiprocessing.cpu_count() if self.num_cpus is None else self.num_cpus
-            logging.info(f"    Parallel processing with {num_cpus} CPUs")
-            with pathos.multiprocessing.ProcessPool(nodes=self.num_cpus) as p:
-                results_spell = p.map(lambda s: correct_spelling(s, self.corpus, self.num_mutation), rest)
-        except ImportError:
-            logging.warning("    pathos is missing; Install pathos to enable parallel processing.")
-            results_spell = [correct_spelling(s, self.corpus, self.num_mutation) for s in rest]
+        results_spell = run_in_parallel_if_possible(
+            lambda s: correct_spelling(s, self.corpus, self.num_mutation),
+            rest,
+            self.num_cpus
+        )
+
+        logging.info("Sending queries to NCBI via entrez-direct")
+        results_ncbi = []
+        for i, s in enumerate(rest, 1):
+            sys.stderr.write(f"       Querying NCBI: {i:4}/{len(rest)}                                                       \r")
+            res = get_suggestion_ncbi_taxonomy(s)
+            results_ncbi.append(res)
 
         logging.info("Sending queries to WoRMS")
         results_worms_batch = get_suggestion_worms_fuzzy_batch(rest)
-        for s, candids_spell in zip(rest, results_spell):
-            candid_worms = results_worms_batch[s]
-            ans[s] = Result(s, False, candid_worms, candids_spell)
 
+        if not (len(rest) == len(results_spell) == len(results_ncbi)):
+            logging.error("Numbers do not match up: Something is WRONG!")
+
+        for s, candids_spell, candid_ncbi in zip(rest, results_spell, results_ncbi):
+            candid_worms = results_worms_batch[s]
+            ans[s] = Result(s, False, candid_worms, candid_ncbi, candids_spell)
         return ans
 
 
@@ -480,7 +531,7 @@ def report(results: Iterable[Result]):
         if is_in_concensus(x):
             correction = x.worms
         else:
-            candidates = [unknown_to_empty(x.worms)] + x.spellcorrector
+            candidates = [unknown_to_empty(x.worms)] + [unknown_to_empty(x.ncbi)] + x.spellcorrector
             correction = "  or  ".join({normalize(x) for x in candidates if x.strip()})
 
         print(f"{emoji}\t{normalize(x.input):38}\t-->\t{correction}")
@@ -509,14 +560,15 @@ def result_as_emoji(result: Result) -> str:
 
 
 def result_to_row(result: Result):
-    # 4 is form (Input name, Status, WoRMS result)
-    num_cols = 3 + SPELL_CORRECTOR_MAX_ITEMS
+    # 4 is form (Input name, Status, WoRMS result, NCBI result)
+    num_cols = 4 + SPELL_CORRECTOR_MAX_ITEMS
     row = [""] * num_cols
     row[0] = normalize(result.input)
     row[1] = result_as_emoji(result)
     row[2] = unknown_to_empty(result.worms)
+    row[3] = unknown_to_empty(result.ncbi)
     for i, item in enumerate(result.spellcorrector):
-        row[i + 3] = normalize(item)
+        row[i + 4] = normalize(item)
     return row
 
 
@@ -525,11 +577,11 @@ def unknown_to_empty(s: str) -> str:
 
 
 def is_in_concensus(result: Result) -> bool:
-    if result.worms == UNKNOWN:
+    if result.worms == UNKNOWN or result.ncbi == "":
         return False
 
     candidates_spell = [normalize(candid) for candid in result.spellcorrector]
-    if len(result.spellcorrector) == 1 and normalize(result.worms) in candidates_spell:
+    if normalize(result.worms) == result.ncbi and len(result.spellcorrector) == 1 and result.ncbi in candidates_spell:
         return True
 
     return False
@@ -583,25 +635,12 @@ if __name__ == "__main__":
     output_filename = args.output
     num_cpus = args.num_cpus if args.num_cpus > 0 else None
     num_mutations = args.distance
-    use_ncbi_taxdump = args.ncbi
 
     logging.debug("Loading all scientific names in FishBase")
     corpus = set(load_names(REFERENCE))
     names = load_names(args.file)
 
-    logging.debug("Loadiing NCBI taxdump...")
-    ncbi_corpus = set()
-    if use_ncbi_taxdump:
-        logging.info("NCBI taxdump is currently hard-disabled due to issue with multiprocessing.")
-        # if REFERENCE_NCBI.exists():
-        #     ncbi_corpus = set(load_names(REFERENCE_NCBI))
-        # else:
-        #    logging.warning(f"NCBI taxdump is missing at {REFERENCE_NCBI}")
-        #    logging.warning("Consider getting from https://github.com/yamaton/fishbase-scraper/raw/main/ncbi_taxdump/ncbi_names.txt.gz")
-    logging.debug("... Done loading NCBI taxdump")
-
-
-    machine = Corrector(corpus, ncbi_corpus, num_mutations, num_cpus)
+    machine = Corrector(corpus, num_mutations, num_cpus)
     total = len(names)
 
     if (not args.onebyone) or args.fast:
